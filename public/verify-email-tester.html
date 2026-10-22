@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra auth harness — verify email</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      /* app.css gives .identity and label a display, which beats [hidden]. */
+      [hidden] {
+        display: none !important;
+      }
+      a {
+        color: var(--accent);
+      }
+      /* Wide, monospace boxes: these digits are read off one screen and typed
+         into another. */
+      .code-boxes {
+        display: flex;
+        gap: 0.5rem;
+        margin: 0.4rem 0 0.9rem;
+      }
+      .code-boxes input {
+        width: 3rem;
+        height: 3.2rem;
+        text-align: center;
+        font: 700 20px var(--mono);
+        margin: 0;
+      }
+      .outcome {
+        margin: 0.6rem 0 0;
+        font-size: 12.5px;
+      }
+      .outcome:empty {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <section>
+          <h2>Verify with the code</h2>
+          <p class="hint">
+            <code>POST /auth/email/verify</code> with
+            <code>email + code</code> — verifies <strong>and</strong> signs you
+            in. The emailed link is the same credential, so using either one
+            kills the other.
+          </p>
+          <form id="code-form">
+            <label>
+              email the code was sent to
+              <input type="text" name="email" id="email" required />
+            </label>
+            <label style="margin-bottom: 0">6-digit code</label>
+            <div class="code-boxes" id="boxes">
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+            </div>
+            <button type="submit">verify</button>
+          </form>
+          <p class="outcome" id="code-outcome"></p>
+
+          <p class="hint" style="margin: 0.9rem 0 0">
+            Didn't get it?
+            <button type="button" id="resend-btn">resend the code</button>
+            <span id="resend-outcome" class="muted"></span>
+          </p>
+          <p class="hint" style="margin: 0.4rem 0 0">
+            <code>POST /auth/email/resend-verification</code> answers the same
+            for every address, so it reveals nothing. Read the new code from the
+            <a href="/inbox">inbox</a>.
+          </p>
+        </section>
+
+        <section style="margin-top: 1.25rem">
+          <h2>Or the link</h2>
+          <p class="hint">
+            <code>POST /auth/email/verify</code> with <code>token</code> —
+            verifies the address but does <strong>not</strong> sign you in: it
+            may have been opened on another device than the one waiting.
+          </p>
+          <p class="note" id="token-note" hidden>
+            Token read from the link — press verify to spend it.
+          </p>
+          <form id="token-form">
+            <label>
+              token
+              <textarea name="token" id="token" rows="3" required></textarea>
+            </label>
+            <button type="submit">verify with the link token</button>
+          </form>
+          <p class="outcome" id="token-outcome"></p>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      const params = new URLSearchParams(location.search);
+      document.getElementById("email").value = params.get("email") ?? "";
+      document.getElementById("token").value = params.get("token") ?? "";
+      document.getElementById("token-note").hidden = !params.get("token");
+
+      const boxes = [...document.querySelectorAll("#boxes input")];
+
+      // Typing advances, backspace retreats, a pasted code fills the row.
+      boxes.forEach((box, index) => {
+        box.addEventListener("input", () => {
+          box.value = box.value.replace(/[^0-9]/g, "");
+          if (box.value && index < boxes.length - 1) {
+            boxes[index + 1].focus();
+          }
+        });
+        box.addEventListener("keydown", (event) => {
+          if (event.key === "Backspace" && !box.value && index > 0) {
+            boxes[index - 1].focus();
+          }
+        });
+        box.addEventListener("paste", (event) => {
+          const digits = (event.clipboardData.getData("text") ?? "")
+            .replace(/[^0-9]/g, "")
+            .slice(0, boxes.length);
+          if (!digits) {
+            return;
+          }
+          event.preventDefault();
+          digits.split("").forEach((digit, offset) => {
+            boxes[offset].value = digit;
+          });
+          boxes[Math.min(digits.length, boxes.length - 1)].focus();
+        });
+      });
+
+      /**
+       * One readable line for a verify refusal, from the data the API adds.
+       *
+       * @param {object} result
+       * @returns {string} HTML
+       */
+      function describeRefusal(result) {
+        const data = result.data ?? {};
+        if (typeof data.retryAfterSeconds === "number") {
+          return `${escapeHtml(result.error)} — try again in ${escapeHtml(
+            data.retryAfterSeconds,
+          )}s`;
+        }
+        if (typeof data.attemptsLeft === "number") {
+          return `${escapeHtml(result.error)} — ${escapeHtml(
+            data.attemptsLeft,
+          )} attempts left before the code is destroyed`;
+        }
+        return escapeHtml(result.error ?? result.statusName);
+      }
+
+      onSubmit("code-form", async (values) => {
+        const result = await api.post("/auth/email/verify", {
+          email: values.email,
+          code: boxes.map((box) => box.value).join(""),
+        });
+        document.getElementById("code-outcome").innerHTML = result.ok
+          ? `verified and signed in as ${escapeHtml(
+              result.data.user?.email,
+            )} — <a href="/account">account →</a>`
+          : describeRefusal(result);
+        if (!result.ok) {
+          boxes.forEach((box) => (box.value = ""));
+        }
+        return result;
+      });
+
+      onSubmit("token-form", async (values) => {
+        const result = await api.post("/auth/email/verify", {
+          token: values.token.trim(),
+        });
+        document.getElementById("token-outcome").innerHTML = result.ok
+          ? `verified — not signed in on this device. <a href="/account">Sign in →</a>`
+          : describeRefusal(result);
+        return result;
+      });
+
+      let resendTimer = null;
+      document
+        .getElementById("resend-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/auth/email/resend-verification", {
+            email: document.getElementById("email").value.trim(),
+          });
+          showResult(result);
+
+          // Counts down from what the server says is left, not the full wait.
+          const note = document.getElementById("resend-outcome");
+          let left = result.data?.resendAfterSeconds;
+          clearInterval(resendTimer);
+          if (typeof left !== "number") {
+            note.textContent = result.error ?? "";
+            return;
+          }
+          const tick = () => {
+            note.textContent =
+              left > 0 ? `requested — resend again in ${left}s` : "requested";
+            left -= 1;
+            if (left < 0) {
+              clearInterval(resendTimer);
+            }
+          };
+          tick();
+          resendTimer = setInterval(tick, 1000);
+        });
+    </script>
+  </body>
+</html>

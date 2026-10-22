@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — api tokens</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main {
+        max-width: 1400px;
+        grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      }
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      #workspace-picker {
+        margin-bottom: 1rem;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      td code {
+        display: block;
+        font: 11px var(--mono);
+        color: var(--muted);
+        word-break: break-all;
+      }
+      td.row-actions button {
+        padding: 0.2rem 0.45rem;
+        font-size: 12px;
+      }
+      fieldset {
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        margin: 0 0 0.6rem;
+        padding: 0.5rem 0.7rem 0.1rem;
+      }
+      legend {
+        color: var(--muted);
+        font-size: 12.5px;
+        padding: 0 0.3rem;
+      }
+      .secret {
+        margin-top: 0.9rem;
+      }
+      .secret code {
+        display: block;
+        margin: 0.4rem 0;
+        padding: 0.5rem;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        font: 13px var(--mono);
+        word-break: break-all;
+      }
+      .expired {
+        color: var(--refused);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <div id="workspace-picker"></div>
+
+        <p class="note">
+          Every route here needs a workspace <strong>ADMIN or OWNER</strong> (an
+          organization OWNER or ADMIN counts as ADMIN); EDITOR and VIEWER get
+          FORBIDDEN. These routes take the <strong>cookie only</strong> — a
+          token can never list, mint or revoke tokens. The secret is shown once,
+          at the mint, and never again.
+        </p>
+
+        <section>
+          <h2>Tokens — GET /workspaces/:id/tokens</h2>
+          <p class="hint">
+            Live tokens, newest first; a revoked one is never listed. An expired
+            one still is, and still counts toward the plan's limit (free 2,
+            starter 5, growth 20, scale 50) until revoked. Last used is written
+            at most once a minute.
+          </p>
+          <button type="button" id="refresh-tokens">refresh</button>
+          <div id="tokens-table" class="table-wrap">
+            <p class="muted">not loaded</p>
+          </div>
+        </section>
+
+        <section>
+          <h2>Mint a token — POST …/tokens</h2>
+          <p class="hint">
+            Answers 201 with <code>secret</code> this one time. Scopes only
+            narrow: a USER token acts as its maker and shrinks if they are
+            demoted; a SERVICE token acts as a workspace ADMIN reaching every
+            project, and only someone who reaches every project may make one. No
+            Idempotency-Key: a second click mints a second token.
+          </p>
+          <form id="mint-form">
+            <label>
+              name — 1 to 100 characters
+              <input type="text" name="name" value="Reporting script" />
+            </label>
+            <fieldset>
+              <legend>scopes — tick none to see the refusal</legend>
+              <label class="checkbox">
+                <input type="checkbox" name="scopes" value="leads.read" />
+                leads.read — reads leads
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" name="scopes" value="leads.write" />
+                leads.write — reads and writes leads
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" name="scopes" value="reports.read" />
+                reports.read — reports, campaigns, projects and pages
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" name="scopes" value="webhooks" />
+                webhooks — reads and manages webhook endpoints
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" name="scopes" value="admin" />
+                admin — everything but transfer, archive, delete, tokens and
+                organization actions
+              </label>
+            </fieldset>
+            <div class="row">
+              <label>
+                ownerType
+                <select name="ownerType">
+                  <option>USER</option>
+                  <option>SERVICE</option>
+                </select>
+              </label>
+              <label>
+                expiresAt — a future date; blank never expires
+                <input
+                  type="text"
+                  name="expiresAt"
+                  placeholder="2030-01-01 or a full ISO time"
+                />
+              </label>
+            </div>
+            <button type="submit">mint token</button>
+          </form>
+          <div id="secret-box"></div>
+        </section>
+
+        <section>
+          <h2>Try it — Authorization: Bearer &lt;secret&gt;</h2>
+          <p class="hint">
+            Sends the secret as a bearer to a route that admits tokens. The
+            cookie still travels, but a bearer always wins, and a bad one is
+            refused outright (401), never retried as the cookie. A scope that
+            does not cover the route gets 403. The X-RateLimit-* headers are not
+            exposed to this page by CORS; read them with curl.
+          </p>
+          <form id="try-form">
+            <label>
+              secret — filled by the mint
+              <input
+                type="text"
+                name="secret"
+                id="try-secret"
+                autocomplete="off"
+              />
+            </label>
+            <label>
+              route
+              <select name="route">
+                <option value="/projects">
+                  GET …/projects — reports.read or admin
+                </option>
+                <option value="/webhook-endpoints">
+                  GET …/webhook-endpoints — webhooks or admin
+                </option>
+                <option value="">GET /workspaces/:id — admin only</option>
+              </select>
+            </label>
+            <button type="submit">send with the token</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>Rate limit — GET …/rate-limit</h2>
+          <p class="hint">
+            This clock minute's token use. Each token may make 120 a minute and
+            the workspace 600; only token requests count, never the cookie.
+            windowUsedPct is the workspace's share of its 600.
+          </p>
+          <button type="button" id="rate-limit-button">read this minute</button>
+          <div id="rate-limit"></div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // The list as last loaded, so the rate-limit table can name tokens.
+      let tokens = [];
+
+      const byId = (id) => document.getElementById(id);
+
+      /**
+       * Call a route under the picked workspace.
+       *
+       * @returns {Promise<object|undefined>} undefined when none is picked
+       */
+      async function workspaceCall(method, suffix, body, headers) {
+        const workspaceId = requireWorkspaceId();
+        if (workspaceId === null) {
+          return undefined;
+        }
+        return api.call(
+          method,
+          `/workspaces/${encodeURIComponent(workspaceId)}${suffix}`,
+          body,
+          headers,
+        );
+      }
+
+      function when(iso) {
+        return iso ? new Date(iso).toLocaleString() : "never";
+      }
+
+      function isExpired(token) {
+        return (
+          token.expiresAt !== null && new Date(token.expiresAt) <= new Date()
+        );
+      }
+
+      function tokenRow(token) {
+        const expires = token.expiresAt
+          ? `${escapeHtml(when(token.expiresAt))}${
+              isExpired(token)
+                ? ' <span class="expired">expired — revoke it</span>'
+                : ""
+            }`
+          : "never";
+        return `<tr data-token-id="${escapeHtml(token.tokenId)}">
+          <td data-field="name">${escapeHtml(token.name)}
+            <code>${escapeHtml(token.tokenId)}</code></td>
+          <td data-field="key"><span class="chip">${escapeHtml(
+            token.keyPrefix,
+          )}··${escapeHtml(token.last4)}</span></td>
+          <td data-field="scopes">${token.scopes
+            .map((scope) => `<span class="chip">${escapeHtml(scope)}</span>`)
+            .join(" ")}</td>
+          <td data-field="owner">${escapeHtml(token.ownerType)}
+            <code>by ${escapeHtml(token.createdBy)}</code></td>
+          <td>${escapeHtml(when(token.createdAt))}</td>
+          <td data-field="used">${escapeHtml(when(token.lastUsedAt))}
+            <code>${escapeHtml(token.lastUsedIp ?? "")}</code></td>
+          <td data-field="expires">${expires}</td>
+          <td class="row-actions"><button type="button" data-action="revoke"
+            data-id="${escapeHtml(token.tokenId)}">revoke</button></td>
+        </tr>`;
+      }
+
+      function renderTokens(result) {
+        const container = byId("tokens-table");
+        if (!result.ok) {
+          container.innerHTML = `<p class="error-line">${escapeHtml(
+            result.error ?? result.statusName,
+          )}</p>`;
+          return;
+        }
+        tokens = result.data;
+        container.innerHTML = tokens.length
+          ? `<table>
+              <thead><tr><th>name</th><th>key</th><th>scopes</th>
+                <th>owner</th><th>created</th><th>last used</th>
+                <th>expires</th><th></th></tr></thead>
+              <tbody>${tokens.map(tokenRow).join("")}</tbody>
+            </table>`
+          : '<p class="muted">no live tokens</p>';
+      }
+
+      /**
+       * Reload the list. The caller decides whether the panel shows it, so an
+       * action's own answer is not overwritten by the redraw.
+       *
+       * @returns {Promise<object|undefined>}
+       */
+      async function loadTokens() {
+        const result = await workspaceCall("GET", "/tokens");
+        if (result !== undefined) {
+          renderTokens(result);
+        }
+        return result;
+      }
+
+      // The one and only time the secret exists outside a hash.
+      function renderSecret(token) {
+        byId("secret-box").innerHTML = `<div class="panel ok secret">
+          <div class="panel-head"><strong>secret — shown this one time</strong>
+            <span class="muted">only a hash is stored; it cannot be shown again</span>
+          </div>
+          <code id="new-secret">${escapeHtml(token.secret)}</code>
+          <button type="button" data-copy="${escapeHtml(
+            token.secret,
+          )}">copy</button>
+          <span class="muted">also put in "try it" below</span>
+        </div>`;
+        byId("try-secret").value = token.secret;
+      }
+
+      function renderRateLimit(result) {
+        const container = byId("rate-limit");
+        if (!result.ok) {
+          container.innerHTML = `<p class="error-line">${escapeHtml(
+            result.error ?? result.statusName,
+          )}</p>`;
+          return;
+        }
+        const usage = result.data;
+        const nameOf = (tokenId) =>
+          tokens.find((token) => token.tokenId === tokenId)?.name ?? tokenId;
+        const rows = usage.perToken
+          .map(
+            (entry) => `<tr data-token-id="${escapeHtml(entry.tokenId)}">
+              <td>${escapeHtml(nameOf(entry.tokenId))}
+                <code>${escapeHtml(entry.tokenId)}</code></td>
+              <td data-field="used">${escapeHtml(entry.used)} / ${escapeHtml(
+                usage.limitPerMinute,
+              )}</td>
+              <td>${escapeHtml(entry.usedPct)}%</td>
+            </tr>`,
+          )
+          .join("");
+        container.innerHTML = `<p id="rate-summary">
+            <span class="chip">${escapeHtml(usage.limitPerMinute)} a minute per token</span>
+            <span class="chip">workspace ${escapeHtml(usage.windowUsedPct)}% of 600</span>
+            <span class="muted">resets ${escapeHtml(when(usage.resetAt))}</span>
+          </p>
+          ${
+            rows
+              ? `<table><thead><tr><th>token</th><th>used</th><th>of its limit</th>
+                </tr></thead><tbody>${rows}</tbody></table>`
+              : '<p class="muted">no tokens</p>'
+          }`;
+      }
+
+      onSubmit("mint-form", async (values, form) => {
+        const body = {
+          name: values.name,
+          // Sent even when empty, so the API's refusal can be seen.
+          scopes: new FormData(form).getAll("scopes"),
+          ownerType: values.ownerType,
+        };
+        // A blank date is left out: "" is not a date and would be refused.
+        if (values.expiresAt.trim() !== "") {
+          body.expiresAt = values.expiresAt.trim();
+        }
+        const result = await workspaceCall("POST", "/tokens", body);
+        if (result?.ok) {
+          renderSecret(result.data);
+          await loadTokens();
+        }
+        return result;
+      });
+
+      onSubmit("try-form", async (values) => {
+        const secret = values.secret.trim();
+        if (secret === "") {
+          showResult({
+            ok: false,
+            status: null,
+            statusName: "NO SECRET",
+            error: "mint a token first, or paste a secret",
+            request: { method: "—", path: "—", body: null },
+            raw: null,
+            ms: 0,
+          });
+          return undefined;
+        }
+        return workspaceCall("GET", values.route, undefined, {
+          Authorization: `Bearer ${secret}`,
+        });
+      });
+
+      byId("tokens-table").addEventListener("click", async (event) => {
+        const button = event.target.closest("button[data-action=revoke]");
+        if (button === null) {
+          return;
+        }
+        button.disabled = true;
+        const result = await workspaceCall(
+          "DELETE",
+          `/tokens/${encodeURIComponent(button.dataset.id)}`,
+        );
+        if (result === undefined) {
+          return;
+        }
+        await loadTokens();
+        showResult(result);
+      });
+
+      byId("refresh-tokens").addEventListener("click", async () => {
+        const result = await loadTokens();
+        if (result !== undefined) {
+          showResult(result);
+        }
+      });
+
+      byId("rate-limit-button").addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          const result = await workspaceCall("GET", "/rate-limit");
+          if (result !== undefined) {
+            renderRateLimit(result);
+            showResult(result);
+          }
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-copy]");
+        if (button === null) {
+          return;
+        }
+        navigator.clipboard?.writeText(button.dataset.copy).catch(() => {});
+        button.textContent = "copied";
+        setTimeout(() => (button.textContent = "copy"), 1200);
+      });
+
+      // A token reaches only the workspace it was minted in, so a new
+      // workspace forgets the old one's secret and list.
+      onWorkspaceChange(async (workspace) => {
+        tokens = [];
+        byId("secret-box").innerHTML = "";
+        byId("try-secret").value = "";
+        byId("rate-limit").innerHTML = "";
+        if (workspace === null) {
+          byId("tokens-table").innerHTML =
+            '<p class="muted">no workspace picked</p>';
+        } else {
+          const result = await loadTokens();
+          if (result !== undefined) {
+            showResult(result);
+          }
+        }
+        document.body.dataset.ready = "true";
+      });
+    </script>
+  </body>
+</html>

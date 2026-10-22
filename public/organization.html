@@ -1,0 +1,1113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — organizations</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      #workspace-picker {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.6rem;
+        margin-bottom: 1rem;
+      }
+      #workspace-picker label {
+        flex: 1;
+        margin: 0;
+      }
+      h3 {
+        margin: 1.1rem 0 0.2rem;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table.kv th {
+        width: 11rem;
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      td code {
+        display: block;
+        font: 11px var(--mono);
+        color: var(--muted);
+        word-break: break-all;
+      }
+      tr.picked td {
+        background: var(--surface-2);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+      }
+      .actions select {
+        width: auto;
+        margin: 0;
+        padding: 0.25rem 0.3rem;
+      }
+      .actions button,
+      .chips button {
+        padding: 0.25rem 0.55rem;
+        font-size: 12px;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin: -0.2rem 0 0.7rem;
+      }
+      .inline-answer {
+        margin: -0.2rem 0 0.7rem;
+        font-size: 12.5px;
+      }
+      .buttons {
+        display: flex;
+        gap: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <div id="workspace-picker"></div>
+
+        <p class="note">
+          Pick an organization and everything below acts on it. The panel shows
+          the call you triggered; tables refresh quietly after a change. Roles:
+          any seat holder reads; <strong>OWNER or ADMIN</strong> renames,
+          creates workspaces and removes people; only the
+          <strong>OWNER</strong> changes roles.
+        </p>
+
+        <section>
+          <h2>Your organizations — GET /organizations/mine</h2>
+          <p class="hint">
+            Every organization you hold a seat in, your primary first. Seats
+            count pending invitations too.
+          </p>
+          <button type="button" id="load-mine">list my organizations</button>
+          <div id="orgs"><p class="muted">not loaded</p></div>
+        </section>
+
+        <section>
+          <h2>Found an organization — POST /organizations</h2>
+          <p class="hint">
+            You become its OWNER; it starts on the free plan (3 seats, 1
+            workspace). Submitting again with the same key replays the first
+            answer (201, same orgId) — press <em>new key</em> before founding
+            another, or the server refuses the reused key.
+          </p>
+          <form id="create-org-form">
+            <label>
+              name — 1 to 100 characters
+              <input type="text" name="name" required />
+            </label>
+            <div class="row">
+              <label>
+                Idempotency-Key — optional
+                <input
+                  type="text"
+                  name="idempotencyKey"
+                  id="org-key"
+                  class="idempotency-key"
+                />
+              </label>
+              <button type="button" data-new-key="#org-key">new key</button>
+            </div>
+            <button type="submit">found organization</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>The picked organization — GET / PATCH /organizations/:orgId</h2>
+          <p class="hint">
+            A stranger, an unknown id and a malformed id all get the same 404.
+          </p>
+          <button type="button" id="reload-org">reload</button>
+          <div id="org-details"><p class="muted">nothing picked</p></div>
+
+          <h3>Change it — OWNER or ADMIN</h3>
+          <form id="update-org-form">
+            <label>
+              name — blank leaves it as is
+              <input type="text" name="name" />
+            </label>
+            <label>
+              primaryDomain — blank leaves it as is; a bare domain such as
+              example.com
+              <input type="text" name="primaryDomain" />
+            </label>
+            <div class="checkbox">
+              <input type="checkbox" name="clearDomain" id="clear-domain" />
+              <label for="clear-domain" style="margin: 0"
+                >clear the domain — sends "primaryDomain": null</label
+              >
+            </div>
+            <button type="submit">save</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>Members — GET /organizations/:orgId/members</h2>
+          <p class="hint">
+            Newest first. q matches the start of an address or a full name.
+            Setting OWNER hands the organization over: confirm your password
+            below first, or it answers IDENTITY_CONFIRM_REQUIRED.
+          </p>
+          <form id="members-form">
+            <div class="row">
+              <label>
+                orgRole
+                <select name="orgRole">
+                  <option value="">any</option>
+                  <option>OWNER</option>
+                  <option>ADMIN</option>
+                  <option>MEMBER</option>
+                </select>
+              </label>
+              <label>
+                external
+                <select name="external">
+                  <option value="">anyone</option>
+                  <option>true</option>
+                  <option>false</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                q
+                <input type="text" name="q" />
+              </label>
+              <label>
+                limit — 1 to 100
+                <input
+                  type="text"
+                  name="limit"
+                  value="25"
+                  inputmode="numeric"
+                />
+              </label>
+            </div>
+            <div class="buttons">
+              <button type="submit">list members</button>
+              <button type="button" id="members-next" disabled>
+                next page
+              </button>
+            </div>
+          </form>
+          <div id="members"><p class="muted">not loaded</p></div>
+
+          <h3>Removing someone — OWNER or ADMIN</h3>
+          <p class="hint">
+            Press <em>impact</em> on a row first: it says what the removal would
+            do. Removal signs them out of every session they have. The key is
+            renewed after each removal, since each row is a new request.
+          </p>
+          <div class="row">
+            <label>
+              reassignToUserId — who takes over their pending invitations
+              <input
+                type="text"
+                id="removal-reassign"
+                list="reassign-candidates"
+              />
+            </label>
+          </div>
+          <datalist id="reassign-candidates"></datalist>
+          <div class="row">
+            <label>
+              Idempotency-Key — optional
+              <input type="text" id="removal-key" class="idempotency-key" />
+            </label>
+            <button type="button" data-new-key="#removal-key">new key</button>
+          </div>
+          <div id="impact"></div>
+
+          <h3>Confirm your password — POST /auth/identity/confirm</h3>
+          <p class="hint">
+            Grants one handover (ORG_OWNERSHIP_TRANSFER) for 5 minutes, on this
+            session only. The handover spends it even if it is then refused.
+          </p>
+          <form id="identity-confirm-form">
+            <div class="row">
+              <label>
+                password
+                <input type="password" name="password" />
+              </label>
+              <label>
+                or a two-factor code
+                <input type="text" name="code" />
+              </label>
+            </div>
+            <button type="submit">confirm for a handover</button>
+          </form>
+
+          <h3>
+            Leave this organization — POST
+            /organizations/:orgId/members/me/leave
+          </h3>
+          <p class="hint">
+            You stay signed in. The owner cannot leave, nor can anyone who still
+            owns a workspace here (LAST_OWNER).
+          </p>
+          <form id="leave-form">
+            <label>
+              reassignToUserId — only if you have pending invitations
+              <input type="text" name="reassignToUserId" />
+            </label>
+            <button type="submit">leave</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>Workspaces — GET /organizations/:orgId/workspaces</h2>
+          <p class="hint">
+            Every workspace in the organization, newest first — including ones
+            you are not in. <em>use</em> makes a row the current workspace for
+            the other pages, when your switcher has it.
+          </p>
+          <form id="workspaces-form">
+            <div class="row">
+              <label>
+                status
+                <select name="status">
+                  <option value="">ACTIVE, ARCHIVED and PENDING_DELETE</option>
+                  <option>ACTIVE</option>
+                  <option>ARCHIVED</option>
+                  <option>PENDING_DELETE</option>
+                </select>
+              </label>
+              <label>
+                limit — 1 to 100
+                <input
+                  type="text"
+                  name="limit"
+                  value="25"
+                  inputmode="numeric"
+                />
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                q — start of the name
+                <input type="text" name="q" />
+              </label>
+              <label>
+                vertical — exact
+                <input type="text" name="vertical" />
+              </label>
+            </div>
+            <div class="buttons">
+              <button type="submit">list workspaces</button>
+              <button type="button" id="workspaces-next" disabled>
+                next page
+              </button>
+            </div>
+          </form>
+          <p id="workspaces-note" class="muted"></p>
+          <div id="workspaces"><p class="muted">not loaded</p></div>
+        </section>
+
+        <section>
+          <h2>Create a workspace — POST /organizations/:orgId/workspaces</h2>
+          <p class="hint">
+            OWNER or ADMIN; you become its OWNER and it becomes your current
+            workspace. The plan caps how many there are (free: 1). Blank slug:
+            one is made from the name.
+          </p>
+          <form id="create-workspace-form">
+            <label>
+              name — 1 to 100 characters
+              <input type="text" name="name" required />
+            </label>
+            <div class="row">
+              <label>
+                slug — optional; 3 to 40 lower-case letters, digits or inner
+                hyphens
+                <input type="text" name="slug" id="ws-slug" />
+              </label>
+              <button type="button" id="check-slug">check</button>
+            </div>
+            <div id="slug-answer" class="inline-answer"></div>
+            <div class="row">
+              <label>
+                defaultVertical — optional, any text up to 60 characters
+                <input type="text" name="defaultVertical" id="ws-vertical" />
+              </label>
+              <button type="button" id="suggest-verticals">suggest</button>
+            </div>
+            <div id="vertical-chips" class="chips"></div>
+            <label>
+              timezone — an IANA zone
+              <input type="text" name="timezone" id="ws-timezone" required />
+            </label>
+            <div class="row">
+              <label>
+                Idempotency-Key — optional; the same key replays the first
+                answer
+                <input
+                  type="text"
+                  name="idempotencyKey"
+                  id="ws-key"
+                  class="idempotency-key"
+                />
+              </label>
+              <button type="button" data-new-key="#ws-key">new key</button>
+            </div>
+            <button type="submit">create workspace</button>
+          </form>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // The picked organization survives a reload; a per-viewer convenience.
+      const PICKED_ORG_KEY = "chakra-dummy-org";
+      const ORG_ROLES = ["OWNER", "ADMIN", "MEMBER"];
+
+      let organizations = [];
+      let pickedOrgId = null;
+      // The filters of the list on screen, so a quiet refresh keeps them.
+      let membersFilters = {};
+      let membersNextCursor = null;
+      let workspacesFilters = {};
+      let workspacesNextCursor = null;
+
+      function rememberOrg(orgId) {
+        try {
+          localStorage.setItem(PICKED_ORG_KEY, orgId ?? "");
+        } catch {
+          // Storage can be blocked; the pick then lasts until reload.
+        }
+      }
+
+      function rememberedOrg() {
+        try {
+          return localStorage.getItem(PICKED_ORG_KEY);
+        } catch {
+          return null;
+        }
+      }
+
+      function when(value) {
+        return value ? new Date(value).toLocaleString() : "—";
+      }
+
+      function orgPath(suffix = "") {
+        return `/organizations/${encodeURIComponent(pickedOrgId)}${suffix}`;
+      }
+
+      /**
+       * The query string for the non-blank values, with its "?".
+       *
+       * @param {object} values
+       * @returns {string}
+       */
+      function queryString(values) {
+        const params = new URLSearchParams();
+        for (const [name, value] of Object.entries(values)) {
+          const text = String(value ?? "").trim();
+          if (text !== "") {
+            params.set(name, text);
+          }
+        }
+        const text = params.toString();
+        return text ? `?${text}` : "";
+      }
+
+      function idempotencyHeaders(key) {
+        const trimmed = String(key ?? "").trim();
+        return trimmed ? { "Idempotency-Key": trimmed } : {};
+      }
+
+      function newKey(input) {
+        input.value = crypto.randomUUID();
+      }
+
+      function showRefusalIn(container, result) {
+        container.innerHTML = `<p class="muted">${escapeHtml(
+          result.error ?? result.statusName,
+        )}</p>`;
+      }
+
+      /**
+       * True when an organization is picked; otherwise says so in the panel.
+       *
+       * @returns {boolean}
+       */
+      function requireOrg() {
+        if (pickedOrgId !== null) {
+          return true;
+        }
+        showResult({
+          ok: false,
+          status: null,
+          statusName: "NO ORGANIZATION",
+          error: "pick an organization first",
+          request: { method: "—", path: "—", body: null },
+          raw: null,
+          ms: 0,
+        });
+        return false;
+      }
+
+      function kvTable(rows) {
+        return `<table class="kv">${rows
+          .map(
+            ([name, value]) =>
+              `<tr><th>${escapeHtml(name)}</th><td>${escapeHtml(value)}</td></tr>`,
+          )
+          .join("")}</table>`;
+      }
+
+      function usage(used, limit, pending) {
+        return `${used} / ${limit}${pending ? ` (${pending} pending)` : ""}`;
+      }
+
+      // ─── organizations ────────────────────────────────────────────────
+
+      async function loadMine() {
+        const result = await api.get("/organizations/mine");
+        if (!result.ok) {
+          organizations = [];
+          showRefusalIn(document.getElementById("orgs"), result);
+          return result;
+        }
+        organizations = result.data;
+        renderMine();
+        return result;
+      }
+
+      function renderMine() {
+        const container = document.getElementById("orgs");
+        if (organizations.length === 0) {
+          container.innerHTML = '<p class="muted">no seat anywhere</p>';
+          return;
+        }
+        container.innerHTML = `<table>
+          <thead><tr><th>name</th><th>your role</th><th>plan</th><th>seats</th>
+          <th>workspaces</th><th>status</th><th></th></tr></thead>
+          <tbody>${organizations
+            .map(
+              (org) => `
+            <tr data-org-id="${escapeHtml(org.id)}"${
+              org.id === pickedOrgId ? ' class="picked"' : ""
+            }>
+              <td>${escapeHtml(org.name)}${
+                org.id === pickedOrgId
+                  ? ' <span class="chip">picked</span>'
+                  : ""
+              }<code>${escapeHtml(org.slug)} · ${escapeHtml(org.id)}</code></td>
+              <td>${escapeHtml(org.orgRole)}</td>
+              <td>${escapeHtml(org.plan)}</td>
+              <td>${escapeHtml(
+                usage(
+                  org.seatUsage.used,
+                  org.seatUsage.limit,
+                  org.seatUsage.pending,
+                ),
+              )}</td>
+              <td>${escapeHtml(
+                usage(org.workspaceUsage.used, org.workspaceUsage.limit),
+              )}</td>
+              <td>${escapeHtml(org.status)}</td>
+              <td><button type="button" data-pick-org="${escapeHtml(
+                org.id,
+              )}">pick</button></td>
+            </tr>`,
+            )
+            .join("")}</tbody></table>`;
+      }
+
+      function renderOrgDetails(org) {
+        document.getElementById("org-details").innerHTML = kvTable([
+          ["name", org.name],
+          ["id", org.id],
+          ["slug", org.slug],
+          ["primaryDomain", org.primaryDomain ?? "— (not set)"],
+          ["status", org.status],
+          ["your role", org.orgRole],
+          ["plan", org.plan],
+          [
+            "seats",
+            usage(
+              org.seatUsage.used,
+              org.seatUsage.limit,
+              org.seatUsage.pending,
+            ),
+          ],
+          [
+            "workspaces",
+            usage(org.workspaceUsage.used, org.workspaceUsage.limit),
+          ],
+        ]);
+      }
+
+      async function loadPickedOrg() {
+        const result = await api.get(orgPath());
+        if (result.ok) {
+          renderOrgDetails(result.data);
+        } else {
+          showRefusalIn(document.getElementById("org-details"), result);
+        }
+        return result;
+      }
+
+      // A change can move seats, workspace counts or your own role.
+      async function refreshOrg() {
+        await loadMine();
+        await loadPickedOrg();
+      }
+
+      function resetOrgLists() {
+        document.getElementById("members").innerHTML =
+          '<p class="muted">not loaded — press list members</p>';
+        document.getElementById("workspaces").innerHTML =
+          '<p class="muted">not loaded — press list workspaces</p>';
+        document.getElementById("impact").innerHTML = "";
+        document.getElementById("reassign-candidates").innerHTML = "";
+        document.getElementById("members-next").disabled = true;
+        document.getElementById("workspaces-next").disabled = true;
+      }
+
+      /**
+       * Make an organization the one the page acts on and read it.
+       *
+       * @param {string|null} orgId
+       * @returns {Promise<object|null>} the GET result, or null when none
+       */
+      async function pickOrg(orgId) {
+        pickedOrgId = orgId;
+        rememberOrg(orgId);
+        renderMine();
+        resetOrgLists();
+        if (orgId === null) {
+          document.getElementById("org-details").innerHTML =
+            '<p class="muted">nothing picked</p>';
+          return null;
+        }
+        return loadPickedOrg();
+      }
+
+      function firstOrgToPick() {
+        const remembered = rememberedOrg();
+        return (
+          organizations.find((org) => org.id === remembered) ??
+          organizations[0] ??
+          null
+        );
+      }
+
+      // ─── members ──────────────────────────────────────────────────────
+
+      async function loadMembers(cursor) {
+        const result = await api.get(
+          orgPath(`/members${queryString({ ...membersFilters, cursor })}`),
+        );
+        const container = document.getElementById("members");
+        const next = document.getElementById("members-next");
+        if (!result.ok) {
+          showRefusalIn(container, result);
+          next.disabled = true;
+          return result;
+        }
+        membersNextCursor = result.data.nextCursor;
+        next.disabled = membersNextCursor === null;
+        renderMembers(result.data.items);
+        return result;
+      }
+
+      function renderMembers(items) {
+        const container = document.getElementById("members");
+        if (items.length === 0) {
+          container.innerHTML = '<p class="muted">nobody matches</p>';
+          return;
+        }
+        container.innerHTML = `<table>
+          <thead><tr><th>person</th><th>orgRole</th><th>seat</th><th></th></tr></thead>
+          <tbody>${items
+            .map(
+              (member) => `
+            <tr data-user-id="${escapeHtml(member.userId)}">
+              <td>${escapeHtml(member.name || "—")}<code>${escapeHtml(
+                member.email,
+              )}</code><code>userId ${escapeHtml(member.userId)}</code><code>joined ${escapeHtml(
+                when(member.joinedAt),
+              )} · last active ${escapeHtml(when(member.lastActiveAt))}</code></td>
+              <td class="role">${escapeHtml(member.orgRole)}</td>
+              <td>${escapeHtml(
+                `${member.workspaceCount} workspaces · ${
+                  member.seatBillable ? "billable" : "free"
+                } · ${member.isExternal ? "external" : "internal"}`,
+              )}</td>
+              <td><div class="actions">
+                <select aria-label="new orgRole">${ORG_ROLES.map(
+                  (role) =>
+                    `<option${role === member.orgRole ? " selected" : ""}>${role}</option>`,
+                ).join("")}</select>
+                <button type="button" data-action="set-role">set role</button>
+                <button type="button" data-action="impact">impact</button>
+                <button type="button" data-action="remove">remove</button>
+              </div></td>
+            </tr>`,
+            )
+            .join("")}</tbody></table>`;
+      }
+
+      async function setRole(row) {
+        const userId = row.dataset.userId;
+        const result = await api.patch(
+          orgPath(`/members/${encodeURIComponent(userId)}`),
+          { orgRole: row.querySelector("select").value },
+        );
+        if (result.ok) {
+          await loadMembers(null);
+          await refreshOrg();
+        }
+        showResult(result);
+      }
+
+      function renderImpact(userId, result) {
+        const container = document.getElementById("impact");
+        if (!result.ok) {
+          showRefusalIn(container, result);
+          return;
+        }
+        const impact = result.data;
+        const workspaces = impact.workspacesAffected
+          .map((workspace) => `${workspace.name ?? "—"} (${workspace.wsRole})`)
+          .join(", ");
+        container.innerHTML = `
+          ${
+            impact.isLastOwner
+              ? '<p class="note">isLastOwner — removing them will be refused with LAST_OWNER until they hand over what they own.</p>'
+              : ""
+          }
+          ${kvTable([
+            ["removing", userId],
+            ["workspacesAffected", workspaces || "none"],
+            ["projectsLost", impact.projectsLost],
+            ["apiTokensInvalidated", impact.apiTokensInvalidated],
+            ["pendingInvitesOwned", impact.pendingInvitesOwned],
+            ["seatsFreedInOrg", impact.seatsFreedInOrg],
+            ["seatsFreeAfter", impact.seatsFreeAfter],
+            ["sessionsRevoked", impact.sessionsRevoked],
+            ["isLastOwner", impact.isLastOwner],
+            ["contentRetained", impact.contentRetained],
+          ])}`;
+        document.getElementById("reassign-candidates").innerHTML =
+          impact.reassignCandidates
+            .map(
+              (candidate) =>
+                `<option value="${escapeHtml(candidate.userId)}">${escapeHtml(
+                  `${candidate.name} <${candidate.email}>`,
+                )}</option>`,
+            )
+            .join("");
+      }
+
+      async function showImpact(row) {
+        const userId = row.dataset.userId;
+        const result = await api.get(
+          orgPath(`/members/${encodeURIComponent(userId)}/removal-impact`),
+        );
+        renderImpact(userId, result);
+        showResult(result);
+      }
+
+      async function removeMember(row) {
+        const reassign = document
+          .getElementById("removal-reassign")
+          .value.trim();
+        const keyInput = document.getElementById("removal-key");
+        const result = await api.post(
+          orgPath(`/members/${encodeURIComponent(row.dataset.userId)}/remove`),
+          reassign ? { reassignToUserId: reassign } : {},
+          idempotencyHeaders(keyInput.value),
+        );
+        if (result.ok) {
+          newKey(keyInput);
+          document.getElementById("impact").innerHTML = "";
+          await loadMembers(null);
+          await refreshOrg();
+        }
+        showResult(result);
+      }
+
+      // ─── workspaces ───────────────────────────────────────────────────
+
+      async function loadWorkspaces(cursor) {
+        const result = await api.get(
+          orgPath(
+            `/workspaces${queryString({ ...workspacesFilters, cursor })}`,
+          ),
+        );
+        const container = document.getElementById("workspaces");
+        const next = document.getElementById("workspaces-next");
+        if (!result.ok) {
+          showRefusalIn(container, result);
+          next.disabled = true;
+          return result;
+        }
+        workspacesNextCursor = result.data.nextCursor;
+        next.disabled = workspacesNextCursor === null;
+        renderWorkspaces(result.data.items);
+        return result;
+      }
+
+      function renderWorkspaces(items) {
+        const container = document.getElementById("workspaces");
+        if (items.length === 0) {
+          container.innerHTML = '<p class="muted">no workspace matches</p>';
+          return;
+        }
+        container.innerHTML = `<table>
+          <thead><tr><th>workspace</th><th>vertical · timezone</th>
+          <th>status</th><th>counts</th><th></th></tr></thead>
+          <tbody>${items
+            .map(
+              (workspace) => `
+            <tr data-workspace-id="${escapeHtml(workspace.id)}">
+              <td>${escapeHtml(workspace.name)}<code>${escapeHtml(
+                workspace.slug,
+              )} · v${escapeHtml(workspace.version)}</code><code>${escapeHtml(
+                workspace.id,
+              )}</code><code>created ${escapeHtml(
+                when(workspace.createdAt),
+              )}</code></td>
+              <td>${escapeHtml(workspace.defaultVertical ?? "—")}<code>${escapeHtml(
+                workspace.timezone ?? "—",
+              )}</code></td>
+              <td>${escapeHtml(workspace.status)}</td>
+              <td>${escapeHtml(
+                `${workspace.counts?.members ?? 0} members · ${
+                  workspace.counts?.projects ?? 0
+                } projects · ${workspace.counts?.pendingInvites ?? 0} invites`,
+              )}</td>
+              <td><button type="button" data-use-workspace="${escapeHtml(
+                workspace.id,
+              )}">use</button></td>
+            </tr>`,
+            )
+            .join("")}</tbody></table>`;
+      }
+
+      // Works through the shared picker, so the other pages see the change.
+      function useWorkspace(workspaceId) {
+        const select = document.getElementById("workspace-select");
+        const option = select
+          ? [...select.options].find(
+              (candidate) => candidate.value === workspaceId,
+            )
+          : undefined;
+        const note = document.getElementById("workspaces-note");
+        if (option === undefined) {
+          note.textContent =
+            "not in your switcher (GET /me/workspaces) — you are not a member there";
+          return;
+        }
+        select.value = workspaceId;
+        select.dispatchEvent(new Event("change"));
+        note.textContent = `current workspace: ${option.textContent}`;
+      }
+
+      function renderSlugAnswer(result) {
+        const container = document.getElementById("slug-answer");
+        if (!result.ok) {
+          showRefusalIn(container, result);
+          return;
+        }
+        if (result.data.available) {
+          container.innerHTML = '<span class="chip">free</span>';
+          return;
+        }
+        container.innerHTML = `<span class="chip">taken, reserved or malformed</span>
+          try <strong>${escapeHtml(result.data.suggestion)}</strong>
+          <button type="button" id="use-suggestion">use it</button>`;
+        document
+          .getElementById("use-suggestion")
+          .addEventListener("click", () => {
+            document.getElementById("ws-slug").value = result.data.suggestion;
+          });
+      }
+
+      function renderVerticalChips(result) {
+        const chips = document.getElementById("vertical-chips");
+        if (!result.ok) {
+          showRefusalIn(chips, result);
+          return;
+        }
+        chips.innerHTML = result.data.length
+          ? result.data
+              .map(
+                (vertical) =>
+                  `<button type="button" data-vertical="${escapeHtml(
+                    vertical,
+                  )}">${escapeHtml(vertical)}</button>`,
+              )
+              .join("")
+          : '<span class="muted">no suggestion — any text is accepted</span>';
+      }
+
+      // ─── wiring ───────────────────────────────────────────────────────
+
+      document
+        .getElementById("load-mine")
+        .addEventListener("click", async () => {
+          showResult(await loadMine());
+        });
+
+      document
+        .getElementById("orgs")
+        .addEventListener("click", async (event) => {
+          const button = event.target.closest("[data-pick-org]");
+          if (button) {
+            showResult(await pickOrg(button.dataset.pickOrg));
+          }
+        });
+
+      document
+        .getElementById("reload-org")
+        .addEventListener("click", async () => {
+          if (requireOrg()) {
+            showResult(await loadPickedOrg());
+          }
+        });
+
+      onSubmit("create-org-form", async (values) => {
+        const result = await api.post(
+          "/organizations",
+          { name: values.name },
+          idempotencyHeaders(values.idempotencyKey),
+        );
+        if (result.ok) {
+          await loadMine();
+        }
+        return result;
+      });
+
+      onSubmit("update-org-form", async (values) => {
+        if (!requireOrg()) {
+          return undefined;
+        }
+        const body = {};
+        if (values.name.trim() !== "") {
+          body.name = values.name;
+        }
+        if (values.clearDomain) {
+          body.primaryDomain = null;
+        } else if (values.primaryDomain.trim() !== "") {
+          body.primaryDomain = values.primaryDomain;
+        }
+        const result = await api.patch(orgPath(), body);
+        if (result.ok) {
+          renderOrgDetails(result.data);
+          await loadMine();
+        }
+        return result;
+      });
+
+      onSubmit("members-form", async (values) => {
+        if (!requireOrg()) {
+          return undefined;
+        }
+        membersFilters = values;
+        return loadMembers(null);
+      });
+
+      document
+        .getElementById("members-next")
+        .addEventListener("click", async () => {
+          showResult(await loadMembers(membersNextCursor));
+        });
+
+      document
+        .getElementById("members")
+        .addEventListener("click", async (event) => {
+          const button = event.target.closest("[data-action]");
+          if (button === null) {
+            return;
+          }
+          const row = button.closest("tr");
+          if (button.dataset.action === "set-role") {
+            await setRole(row);
+          } else if (button.dataset.action === "impact") {
+            await showImpact(row);
+          } else {
+            await removeMember(row);
+          }
+        });
+
+      onSubmit("identity-confirm-form", async (values) => {
+        const body = { action: "ORG_OWNERSHIP_TRANSFER" };
+        if (values.password !== "") {
+          body.password = values.password;
+        }
+        if (values.code.trim() !== "") {
+          body.code = values.code.trim();
+        }
+        return api.post("/auth/identity/confirm", body);
+      });
+
+      onSubmit("leave-form", async (values) => {
+        if (!requireOrg()) {
+          return undefined;
+        }
+        const reassign = values.reassignToUserId.trim();
+        const result = await api.post(
+          orgPath("/members/me/leave"),
+          reassign ? { reassignToUserId: reassign } : {},
+        );
+        if (result.ok) {
+          await loadMine();
+          await pickOrg(firstOrgToPick()?.id ?? null);
+          await renderWorkspacePicker();
+        }
+        return result;
+      });
+
+      onSubmit("workspaces-form", async (values) => {
+        if (!requireOrg()) {
+          return undefined;
+        }
+        workspacesFilters = values;
+        return loadWorkspaces(null);
+      });
+
+      document
+        .getElementById("workspaces-next")
+        .addEventListener("click", async () => {
+          showResult(await loadWorkspaces(workspacesNextCursor));
+        });
+
+      document
+        .getElementById("workspaces")
+        .addEventListener("click", (event) => {
+          const button = event.target.closest("[data-use-workspace]");
+          if (button) {
+            useWorkspace(button.dataset.useWorkspace);
+          }
+        });
+
+      document
+        .getElementById("check-slug")
+        .addEventListener("click", async () => {
+          const slug = document.getElementById("ws-slug").value;
+          const result = await api.get(
+            `/workspaces/slug-available${queryString({ slug })}`,
+          );
+          renderSlugAnswer(result);
+          showResult(result);
+        });
+
+      document
+        .getElementById("suggest-verticals")
+        .addEventListener("click", async () => {
+          const typed = document.getElementById("ws-vertical").value;
+          const result = await api.get(
+            `/verticals/suggest${queryString({ q: typed })}`,
+          );
+          renderVerticalChips(result);
+          showResult(result);
+        });
+
+      document
+        .getElementById("vertical-chips")
+        .addEventListener("click", (event) => {
+          const chip = event.target.closest("[data-vertical]");
+          if (chip) {
+            document.getElementById("ws-vertical").value =
+              chip.dataset.vertical;
+          }
+        });
+
+      onSubmit("create-workspace-form", async (values) => {
+        if (!requireOrg()) {
+          return undefined;
+        }
+        const body = { name: values.name, timezone: values.timezone };
+        if (values.slug.trim() !== "") {
+          body.slug = values.slug.trim();
+        }
+        if (values.defaultVertical.trim() !== "") {
+          body.defaultVertical = values.defaultVertical;
+        }
+        const result = await api.post(
+          orgPath("/workspaces"),
+          body,
+          idempotencyHeaders(values.idempotencyKey),
+        );
+        if (result.ok) {
+          // Remembered first, so the refreshed picker lands on the new one.
+          setCurrentWorkspace({
+            id: result.data.workspaceId,
+            orgId: pickedOrgId,
+            name: values.name,
+            role: result.data.role,
+          });
+          await renderWorkspacePicker();
+          await loadWorkspaces(null);
+          await refreshOrg();
+        }
+        return result;
+      });
+
+      document.querySelectorAll("[data-new-key]").forEach((button) => {
+        button.addEventListener("click", () =>
+          newKey(document.querySelector(button.dataset.newKey)),
+        );
+      });
+
+      (async () => {
+        document.querySelectorAll(".idempotency-key").forEach(newKey);
+        document.getElementById("ws-timezone").value =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+        resetOrgLists();
+        showResult(await loadMine());
+        const first = firstOrgToPick();
+        if (first !== null) {
+          showResult(await pickOrg(first.id));
+        }
+      })();
+    </script>
+  </body>
+</html>

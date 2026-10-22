@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — organization invitations</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      a {
+        color: var(--accent);
+      }
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.45rem 0.5rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+        font-size: 12px;
+      }
+      td .muted {
+        font-size: 11.5px;
+      }
+      td.email {
+        overflow-wrap: anywhere;
+      }
+      td.actions {
+        white-space: nowrap;
+      }
+      td.actions button {
+        padding: 0.25rem 0.55rem;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <p class="note">
+          Organization invitations (<code>/auth/invite/*</code>) — not workspace
+          invitations. Sending, listing and withdrawing need
+          <strong>OWNER or ADMIN</strong> of the organization; a MEMBER gets
+          FORBIDDEN. The link is mailed to <code>/accept-invite?token=…</code>.
+        </p>
+
+        <section>
+          <h2>Organization</h2>
+          <p class="hint">
+            Which organization the calls below act on. "primary" leaves
+            <code>organizationId</code> out, so the API uses the caller's own.
+            Picking one sends it — in the body for send and revoke, in the query
+            for the list.
+          </p>
+          <div class="row">
+            <label>
+              organization
+              <select id="org-select">
+                <option value="">primary — organizationId left out</option>
+              </select>
+            </label>
+            <button type="button" id="reload-orgs">reload</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Invite someone</h2>
+          <p class="hint">
+            ⚠️ OWNER is offered only so its refusal can be seen: an invitation
+            can never make a second owner. Inviting an address that already has
+            an account works too — the mail tells them to sign in first.
+          </p>
+          <form id="invite-form">
+            <div class="row">
+              <label>
+                email
+                <input type="text" name="email" id="invite-email" required />
+              </label>
+              <button
+                type="button"
+                data-fresh-email="#invite-email"
+                data-label="invitee"
+              >
+                fresh
+              </button>
+            </div>
+            <label>
+              role
+              <select name="role" id="invite-role">
+                <option value="MEMBER">MEMBER</option>
+                <option value="ADMIN">ADMIN</option>
+                <option value="OWNER">OWNER — must be refused</option>
+              </select>
+            </label>
+            <button type="submit">send invitation</button>
+          </form>
+          <p id="sent-hint" class="hint" style="margin-top: 0.6rem"></p>
+        </section>
+
+        <section>
+          <h2>Pending invitations</h2>
+          <p class="hint">
+            Resend re-invites the same address: the old row and its link die and
+            a new mail goes out. Revoke withdraws it, so the mailed link stops
+            working.
+          </p>
+          <button type="button" id="refresh-invites">refresh</button>
+          <div id="invites" style="margin-top: 0.9rem">
+            <p class="muted">not loaded</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      function selectedOrgId() {
+        return document.getElementById("org-select").value;
+      }
+
+      // Adds organizationId only when one is picked, so "primary" really
+      // leaves it out rather than sending an empty string.
+      function withOrg(body) {
+        const orgId = selectedOrgId();
+        return orgId ? { ...body, organizationId: orgId } : body;
+      }
+
+      function formatDate(value) {
+        return value
+          ? new Date(value).toLocaleString(undefined, {
+              dateStyle: "short",
+              timeStyle: "short",
+            })
+          : "—";
+      }
+
+      async function loadOrganizations() {
+        const result = await api.get("/organizations/mine");
+        showResult(result);
+        const select = document.getElementById("org-select");
+        const kept = select.value;
+        const organizations = result.ok ? result.data : [];
+        select.innerHTML =
+          '<option value="">primary — organizationId left out</option>' +
+          organizations
+            .map(
+              (organization) =>
+                `<option value="${escapeHtml(organization.id)}">${escapeHtml(
+                  organization.name,
+                )} · ${escapeHtml(organization.orgRole)}</option>`,
+            )
+            .join("");
+        select.value = organizations.some((org) => org.id === kept) ? kept : "";
+      }
+
+      function inviteRow(invite) {
+        return `<tr data-email="${escapeHtml(invite.email)}">
+          <td class="email">${escapeHtml(invite.email)}
+            <div class="muted">id ${escapeHtml(invite.id)}</div></td>
+          <td><span class="chip">${escapeHtml(invite.role)}</span></td>
+          <td>${escapeHtml(invite.invitedBy?.name ?? invite.invitedBy?.id ?? "—")}</td>
+          <td>${escapeHtml(formatDate(invite.createdAt))}
+            <div class="muted">expires ${escapeHtml(formatDate(invite.expiresAt))}</div></td>
+          <td class="actions">
+            <button type="button" data-action="resend"
+              data-email="${escapeHtml(invite.email)}"
+              data-role="${escapeHtml(invite.role)}">resend</button>
+            <button type="button" data-action="revoke"
+              data-id="${escapeHtml(invite.id)}">revoke</button>
+            <a href="/inbox?email=${encodeURIComponent(invite.email)}">inbox</a>
+          </td>
+        </tr>`;
+      }
+
+      function renderInvites(result) {
+        const container = document.getElementById("invites");
+        if (!result.ok) {
+          container.innerHTML = `<p class="error-line">${escapeHtml(
+            result.error ?? result.statusName,
+          )}</p>`;
+          return;
+        }
+        const invites = result.data.invites;
+        container.innerHTML = invites.length
+          ? `<table>
+              <thead><tr><th>email</th><th>role</th><th>invited by</th>
+                <th>sent</th><th></th></tr></thead>
+              <tbody>${invites.map(inviteRow).join("")}</tbody>
+            </table>`
+          : '<p class="muted">nothing pending</p>';
+      }
+
+      // After an action the list is redrawn quietly, so the panel keeps
+      // showing the action's own answer rather than the list's.
+      async function loadInvites(showInPanel) {
+        const orgId = selectedOrgId();
+        const result = await api.get(
+          `/auth/invite/list${
+            orgId ? `?organizationId=${encodeURIComponent(orgId)}` : ""
+          }`,
+        );
+        if (showInPanel) {
+          showResult(result);
+        }
+        renderInvites(result);
+      }
+
+      function noteSent(result, email) {
+        document.getElementById("sent-hint").innerHTML = result.ok
+          ? `mail queued → <a href="/inbox?email=${encodeURIComponent(
+              email,
+            )}">open ${escapeHtml(email)}'s inbox</a>`
+          : "";
+      }
+
+      function sendInvite(email, role) {
+        return api.post("/auth/invite/send", withOrg({ email, role }));
+      }
+
+      onSubmit("invite-form", async (values) => {
+        const result = await sendInvite(values.email, values.role);
+        noteSent(result, values.email);
+        await loadInvites(false);
+        return result;
+      });
+
+      document
+        .getElementById("invites")
+        .addEventListener("click", async (event) => {
+          const button = event.target.closest("button[data-action]");
+          if (button === null) {
+            return;
+          }
+          button.disabled = true;
+          const result =
+            button.dataset.action === "revoke"
+              ? await api.post(
+                  "/auth/invite/revoke",
+                  withOrg({ inviteId: button.dataset.id }),
+                )
+              : await sendInvite(button.dataset.email, button.dataset.role);
+          if (button.dataset.action === "resend") {
+            noteSent(result, button.dataset.email);
+          }
+          await loadInvites(false);
+          showResult(result);
+        });
+
+      document
+        .getElementById("refresh-invites")
+        .addEventListener("click", () => loadInvites(true));
+      document
+        .getElementById("org-select")
+        .addEventListener("change", () => loadInvites(true));
+      document
+        .getElementById("reload-orgs")
+        .addEventListener("click", loadOrganizations);
+
+      (async () => {
+        await loadOrganizations();
+        await loadInvites(true);
+        document.body.dataset.ready = "true";
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra auth harness — google</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      .outcome {
+        margin: 0.6rem 0 0;
+        font-size: 12.5px;
+      }
+      .outcome:empty {
+        display: none;
+      }
+      /* .identity sets display, which would otherwise beat [hidden]. */
+      #challenge-banner[hidden] {
+        display: none;
+      }
+      /* Held open so Google's button appearing does not move the forms. */
+      #google-button {
+        min-height: 44px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+      <div
+        id="challenge-banner"
+        class="identity"
+        style="margin-top: 0.5rem; border-left: 3px solid var(--refused)"
+        hidden
+      ></div>
+    </header>
+
+    <main>
+      <div>
+        <p class="note">
+          The server verifies every ID token against Google's keys, with the
+          audience pinned to its own <code>GOOGLE_CLIENT_ID</code>. If that is
+          not configured, or the token was minted for another client id, every
+          call below answers 401 "could not be verified" — which is itself worth
+          seeing. While the consent screen is in Testing, only listed test users
+          get a token at all.
+        </p>
+
+        <section>
+          <h2>Get an ID token</h2>
+          <p class="hint">
+            The button comes from Google's script and fills the token box. It
+            must use the same client id the API is configured with. No button?
+            Paste a token by hand, or send any text to see the refusal.
+          </p>
+          <div class="row">
+            <label>
+              Google client id
+              <input
+                type="text"
+                id="client-id"
+                value="831633636977-5udfv455pim2mgnequj8boivlck30hun.apps.googleusercontent.com"
+              />
+            </label>
+            <button type="button" id="load-google-btn">load button</button>
+          </div>
+          <div id="google-button"></div>
+          <p class="hint" id="gsi-status" style="margin-top: 0.6rem"></p>
+          <label>
+            ID token — sent by every call below
+            <textarea id="id-token" rows="3" autocomplete="off"></textarea>
+          </label>
+          <p class="outcome" id="token-claims"></p>
+        </section>
+
+        <section>
+          <h2>Sign in or sign up</h2>
+          <p class="hint">
+            <code>POST /auth/google/sign-in</code> — four answers on a 200: a
+            session, <code>mfaRequired</code>,
+            a direct sign-up (a new Google account gets its organization named
+            for it — send an organization to choose the name) or
+            <code>linkRequired</code> (the address already has a password
+            account; sign in with the password and link below).
+          </p>
+          <form id="signin-form">
+            <label>
+              organization — optional; a brand-new account is named for you when left out
+              <input type="text" name="organization" value="" />
+            </label>
+            <div class="checkbox">
+              <input type="checkbox" name="keepSignedIn" id="keep" />
+              <label for="keep" style="margin: 0">keep me signed in</label>
+            </div>
+            <button type="submit">sign in with Google</button>
+          </form>
+          <p class="outcome" id="signin-outcome"></p>
+        </section>
+
+        <section>
+          <h2>Link and unlink</h2>
+          <p class="hint">
+            <code>POST /auth/google/link</code> needs the password as well as
+            the session, so owning a matching Google address is never enough to
+            claim an account. <code>POST /auth/google/unlink</code> is refused
+            when Google is the only way in.
+          </p>
+          <form id="link-form">
+            <div class="row">
+              <label>
+                current password
+                <input
+                  type="text"
+                  name="currentPassword"
+                  value="correct horse battery"
+                  required
+                />
+              </label>
+              <button type="submit">link the token above</button>
+            </div>
+          </form>
+          <div class="row" style="margin-top: 0.6rem">
+            <button type="button" id="unlink-btn">unlink Google</button>
+          </div>
+          <p class="outcome" id="link-outcome"></p>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      const GSI_SCRIPT = "https://accounts.google.com/gsi/client";
+
+      function setOutcome(id, html) {
+        document.getElementById(id).innerHTML = html;
+      }
+
+      function refusalHtml(result) {
+        return `<span class="error-line">${escapeHtml(
+          result.error ?? result.statusName,
+        )}</span>`;
+      }
+
+      function idToken() {
+        return document.getElementById("id-token").value.trim();
+      }
+
+      // Decoded without checking the signature, only to show which account
+      // Google returned. The server is what verifies it.
+      function showClaims(token) {
+        try {
+          const payload = token.split(".")[1];
+          const claims = JSON.parse(
+            atob(payload.replace(/-/g, "+").replace(/_/g, "/")),
+          );
+          setOutcome(
+            "token-claims",
+            `token for <strong>${escapeHtml(
+              claims.email ?? "no email claim",
+            )}</strong> <span class="chip">email_verified ${escapeHtml(
+              claims.email_verified,
+            )}</span> <span class="muted">decoded here, unverified</span>`,
+          );
+        } catch {
+          setOutcome("token-claims", "not a readable JWT — sent as-is");
+        }
+      }
+
+      function onCredential(response) {
+        document.getElementById("id-token").value = response.credential;
+        showClaims(response.credential);
+      }
+
+      function renderGoogleButton() {
+        const clientId = document.getElementById("client-id").value.trim();
+        const status = document.getElementById("gsi-status");
+        if (clientId === "") {
+          status.textContent = "no client id — paste a token instead";
+          return;
+        }
+        google.accounts.id.initialize({
+          client_id: clientId,
+          callback: onCredential,
+        });
+        google.accounts.id.renderButton(
+          document.getElementById("google-button"),
+          { theme: "outline", size: "large", text: "signin_with" },
+        );
+        status.textContent = "click the button to get an ID token";
+      }
+
+      // Google's script is loaded on demand, so the page works without it.
+      function loadGoogle() {
+        const status = document.getElementById("gsi-status");
+        if (window.google?.accounts?.id) {
+          renderGoogleButton();
+          return;
+        }
+        status.textContent = "loading Google…";
+        const script = document.createElement("script");
+        script.src = GSI_SCRIPT;
+        script.async = true;
+        script.onload = renderGoogleButton;
+        script.onerror = () => {
+          status.textContent =
+            "⚠️ Google's script did not load — paste a token by hand instead";
+        };
+        document.head.appendChild(script);
+      }
+
+      document
+        .getElementById("load-google-btn")
+        .addEventListener("click", loadGoogle);
+      // On input, not change: change fires on blur, and the line it adds would
+      // move the button being clicked.
+      document
+        .getElementById("id-token")
+        .addEventListener("input", () => showClaims(idToken()));
+
+      onSubmit("signin-form", async (values) => {
+        const body = {
+          idToken: idToken(),
+          keepSignedIn: values.keepSignedIn === "on",
+        };
+        if (values.organization.trim() !== "") {
+          body.organization = values.organization.trim();
+        }
+        const result = await api.post("/auth/google/sign-in", body);
+        let outcome = refusalHtml(result);
+        if (result.data?.user) {
+          outcome = `signed in as <strong>${escapeHtml(
+            result.data.user.email,
+          )}</strong>`;
+        } else if (result.data?.mfaRequired) {
+          outcome = "two-factor needed — finish it on the two-factor page";
+        } else if (result.data?.organizationRequired) {
+          // Only an API from before 2026-10-14 answers this.
+          outcome = `older API: new account for ${escapeHtml(
+            result.data.email,
+          )} — fill the organization and send again`;
+        } else if (result.data?.linkRequired) {
+          outcome = `${escapeHtml(
+            result.data.email,
+          )} already has a password account — sign in with the password, then link below`;
+        }
+        setOutcome("signin-outcome", outcome);
+        noteIfChallenged(result);
+        // Only a `user` outcome is a session, but repaint either way so the
+        // strip never disagrees with the server.
+        await refreshIdentity();
+        return result;
+      });
+
+      onSubmit("link-form", async (values) => {
+        const result = await api.post("/auth/google/link", {
+          idToken: idToken(),
+          currentPassword: values.currentPassword,
+        });
+        setOutcome(
+          "link-outcome",
+          result.ok ? "Google is linked" : refusalHtml(result),
+        );
+        await refreshIdentity();
+        return result;
+      });
+
+      document
+        .getElementById("unlink-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/auth/google/unlink");
+          setOutcome(
+            "link-outcome",
+            result.ok ? "Google is unlinked" : refusalHtml(result),
+          );
+          showResult(result);
+          await refreshIdentity();
+        });
+
+      loadGoogle();
+      document.body.dataset.ready = "true";
+    </script>
+  </body>
+</html>

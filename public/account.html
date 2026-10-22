@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra auth harness — account</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      /* app.css gives .identity and label a display, which beats [hidden]. */
+      [hidden] {
+        display: none !important;
+      }
+      a {
+        color: var(--accent);
+      }
+      .code-boxes {
+        display: flex;
+        gap: 0.5rem;
+        margin: 0.4rem 0 0.9rem;
+      }
+      .code-boxes input {
+        width: 3rem;
+        height: 3.2rem;
+        text-align: center;
+        font: 700 20px var(--mono);
+        margin: 0;
+      }
+      .outcome {
+        margin: 0.6rem 0 0;
+        font-size: 12.5px;
+      }
+      .outcome:empty {
+        display: none;
+      }
+      table.kv {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.7rem;
+        font-size: 12.5px;
+      }
+      table.kv th,
+      table.kv td {
+        text-align: left;
+        padding: 0.3rem 0.5rem;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      table.kv th {
+        color: var(--muted);
+        font-weight: 500;
+        width: 9rem;
+      }
+      table.kv td {
+        font-family: var(--mono);
+        word-break: break-all;
+      }
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+      <div
+        id="challenge-banner"
+        class="identity"
+        style="margin-top: 0.5rem; border-left: 3px solid #fbbf24"
+        hidden
+      ></div>
+    </header>
+
+    <main>
+      <div id="normal-screens">
+        <p class="note">
+          Mail is never really sent locally — it waits in the outbox. Read codes
+          and links from the <a href="/inbox">dev inbox</a>. Use
+          <code>@example.com</code> addresses.
+        </p>
+
+        <section>
+          <h2>Register</h2>
+          <p class="hint">
+            <code>POST /auth/account/register</code> — creates the account
+            (PENDING_VERIFICATION) and its organization, and mails a 6-digit
+            code plus a link. It cannot sign in until verified.
+          </p>
+          <form id="register-form">
+            <div class="row">
+              <label>
+                email
+                <input type="text" name="email" id="register-email" required />
+              </label>
+              <button
+                type="button"
+                data-fresh-email="#register-email"
+                data-label="reg"
+              >
+                fresh
+              </button>
+            </div>
+            <label>
+              password — 10 to 72 bytes
+              <input
+                type="text"
+                name="password"
+                value="correct horse battery"
+                required
+              />
+            </label>
+            <div class="row">
+              <label>
+                first name
+                <input type="text" name="firstName" value="Ada" required />
+              </label>
+              <label>
+                last name
+                <input type="text" name="lastName" value="Lovelace" required />
+              </label>
+            </div>
+            <label>
+              organization
+              <input
+                type="text"
+                name="organization"
+                value="Analytical Engines"
+                required
+              />
+            </label>
+            <div class="checkbox">
+              <input type="checkbox" name="keepSignedIn" id="register-keep" />
+              <label for="register-keep" style="margin: 0"
+                >keep me signed in — remembered until you verify with the
+                code</label
+              >
+            </div>
+            <button type="submit">register</button>
+          </form>
+          <p class="outcome" id="register-outcome"></p>
+        </section>
+
+        <section>
+          <h2>Sign in</h2>
+          <p class="hint">
+            <code>POST /auth/session/login</code> — an unverified account is
+            refused with 403. A wrong password answers 401 with
+            <code>attemptsRemaining</code>; five in 15 minutes locks the
+            address.
+          </p>
+          <form id="login-form">
+            <label>
+              email
+              <input type="text" name="email" id="login-email" required />
+            </label>
+            <label>
+              password
+              <input
+                type="text"
+                name="password"
+                value="correct horse battery"
+                required
+              />
+            </label>
+            <div class="checkbox">
+              <input type="checkbox" name="keepSignedIn" id="login-keep" />
+              <label for="login-keep" style="margin: 0"
+                >keep me signed in — a 90-day cookie instead of a
+                browser-session one</label
+              >
+            </div>
+            <button type="submit">sign in</button>
+          </form>
+          <p class="outcome" id="login-outcome"></p>
+        </section>
+
+        <section>
+          <h2>Sign in without a password</h2>
+          <p class="hint">
+            Both answer <strong>identically</strong> whether or not the address
+            has an account — try a made-up one. The emailed links open
+            <a href="/reset-password-tester">/reset-password-tester</a> and
+            <a href="/magic-link-tester">/magic-link-tester</a>.
+          </p>
+          <form id="forgot-form">
+            <div class="row">
+              <label>
+                email
+                <input type="text" name="email" id="forgot-email" required />
+              </label>
+              <button type="submit">forgot password</button>
+            </div>
+          </form>
+          <p class="outcome" id="forgot-outcome"></p>
+          <form id="magic-form" style="margin-top: 0.6rem">
+            <div class="row">
+              <label>
+                email
+                <input type="text" name="email" id="magic-email" required />
+              </label>
+              <button type="submit">send magic link</button>
+            </div>
+          </form>
+          <p class="outcome" id="magic-outcome"></p>
+        </section>
+
+        <section>
+          <h2>Profile</h2>
+          <p class="hint">
+            <code>GET /auth/profile/get</code> — the canonical user object. The
+            cookie is HttpOnly, so only the server can say who you are.
+          </p>
+          <button type="button" id="profile-btn">load profile</button>
+          <div id="profile"></div>
+        </section>
+
+        <section>
+          <h2>Change password</h2>
+          <p class="hint">
+            <code>POST /auth/password/change</code> — signs out every
+            <strong>other</strong> device; this one stays signed in.
+          </p>
+          <form id="change-form">
+            <label>
+              current password
+              <input type="text" name="currentPassword" required />
+            </label>
+            <label>
+              new password
+              <input type="text" name="newPassword" required />
+            </label>
+            <button type="submit">change password</button>
+          </form>
+          <p class="outcome" id="change-outcome"></p>
+        </section>
+
+        <section>
+          <h2>Sign out</h2>
+          <p class="hint">
+            <code>POST /auth/session/logout</code> ends this device's session
+            and works even when already signed out.
+            <code>POST /auth/session/logout-all</code> ends every session, this
+            one included.
+          </p>
+          <div class="row">
+            <button type="button" id="logout-btn">sign out</button>
+            <button type="button" id="logout-all-btn">
+              sign out everywhere
+            </button>
+            <button type="button" id="cookie-btn">
+              can JS read the cookie?
+            </button>
+          </div>
+          <p class="outcome" id="session-outcome"></p>
+        </section>
+      </div>
+
+      <!-- Replaces the forms when a sign-in stops at the second factor, so it
+           reads as the next step rather than an unrelated widget. -->
+      <div id="challenge-screen" hidden>
+        <section style="border-left: 3px solid #fbbf24">
+          <h2>Two-step verification</h2>
+          <p class="hint" id="challenge-for"></p>
+          <p class="note" style="margin: 0.8rem 0">
+            You are <strong>not signed in yet</strong>: this set a challenge
+            cookie, not a session.
+          </p>
+          <form id="challenge-form">
+            <label style="margin-bottom: 0" id="code-label"
+              >6-digit code from your authenticator app</label
+            >
+            <div class="code-boxes" id="challenge-boxes">
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+              <input inputmode="numeric" maxlength="1" autocomplete="off" />
+            </div>
+            <label id="backup-label" hidden>
+              backup code
+              <input
+                type="text"
+                name="backupCode"
+                id="backup-input"
+                placeholder="one code, e.g. 0f467-49936"
+                autocomplete="off"
+              />
+            </label>
+            <button type="submit">verify and sign in</button>
+          </form>
+          <p class="hint" style="margin-top: 0.9rem">
+            <button type="button" id="toggle-backup">
+              use a backup code instead
+            </button>
+          </p>
+          <p class="hint">
+            <button type="button" id="abandon-inline">
+              not you? abandon this sign-in
+            </button>
+            — a server action, so the challenge does not stay alive.
+          </p>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      /**
+       * Put a line of HTML under a form. Callers escape anything from the server.
+       *
+       * @param {string} id the outcome element's id
+       * @param {string} html
+       * @returns {void}
+       */
+      function setOutcome(id, html) {
+        document.getElementById(id).innerHTML = html;
+      }
+
+      /**
+       * Render a user object as a two-column table.
+       *
+       * @param {object|null} user
+       * @returns {void}
+       */
+      function renderProfile(user) {
+        const target = document.getElementById("profile");
+        if (user === null) {
+          target.innerHTML = '<p class="muted outcome">signed out</p>';
+          return;
+        }
+        const rows = Object.entries(user).map(([key, value]) => {
+          const shown =
+            value !== null && typeof value === "object"
+              ? JSON.stringify(value)
+              : (value ?? "—");
+          return `<tr><th>${escapeHtml(key)}</th><td data-field="${escapeHtml(
+            key,
+          )}">${escapeHtml(shown)}</td></tr>`;
+        });
+        target.innerHTML = `<table class="kv">${rows.join("")}</table>`;
+      }
+
+      /**
+       * Count down a server-given cooldown in an outcome line.
+       *
+       * @param {string} id the outcome element's id
+       * @param {number} seconds what the server said is left
+       * @param {string} lead text before the countdown
+       * @returns {void}
+       */
+      function countDown(id, seconds, lead) {
+        let left = seconds;
+        const tick = () => {
+          setOutcome(
+            id,
+            `${escapeHtml(lead)} — ${
+              left > 0 ? `send again in ${left}s` : "you can send again"
+            }`,
+          );
+          left -= 1;
+          if (left < 0) {
+            clearInterval(countDown.timers[id]);
+          }
+        };
+        clearInterval(countDown.timers[id]);
+        tick();
+        countDown.timers[id] = setInterval(tick, 1000);
+      }
+      countDown.timers = {};
+
+      onSubmit("register-form", async (values) => {
+        const result = await api.post("/auth/account/register", {
+          email: values.email,
+          password: values.password,
+          firstName: values.firstName,
+          lastName: values.lastName,
+          organization: values.organization,
+          keepSignedIn: values.keepSignedIn === "on",
+        });
+        setOutcome(
+          "register-outcome",
+          result.ok
+            ? `registered — <a id="verify-link" href="/verify-email-tester?email=${encodeURIComponent(
+                values.email,
+              )}">enter the emailed code →</a>`
+            : `<span class="muted">${escapeHtml(result.error)}</span>`,
+        );
+        return result;
+      });
+
+      /**
+       * One readable line for a sign-in refusal, from the data the API adds.
+       *
+       * @param {object} result the login result
+       * @param {string} email the address that was tried
+       * @returns {string} HTML
+       */
+      function describeLoginRefusal(result, email) {
+        const data = result.data ?? {};
+        if (typeof data.retryAfterSeconds === "number") {
+          return `locked — try again in ${escapeHtml(data.retryAfterSeconds)}s`;
+        }
+        if (typeof data.attemptsRemaining === "number") {
+          return `${escapeHtml(result.error)} — ${escapeHtml(
+            data.attemptsRemaining,
+          )} attempts left before a lockout`;
+        }
+        if (result.status === 403 && /verify/i.test(result.error ?? "")) {
+          return `${escapeHtml(result.error)} — <a href="/verify-email-tester?email=${encodeURIComponent(
+            email,
+          )}">verify it →</a>`;
+        }
+        return escapeHtml(result.error ?? result.statusName);
+      }
+
+      onSubmit("login-form", async (values) => {
+        const result = await api.post("/auth/session/login", {
+          email: values.email,
+          password: values.password,
+          // An unchecked box is absent from FormData, so send a real boolean.
+          keepSignedIn: values.keepSignedIn === "on",
+        });
+        if (result.ok && result.data?.mfaRequired === true) {
+          setOutcome("login-outcome", "");
+          showChallengeScreen(true, result.data.email);
+        } else if (result.ok) {
+          setOutcome(
+            "login-outcome",
+            `signed in as ${escapeHtml(result.data.user.email)} · <a href="/flow">next: what happens after sign-in ▸</a>`,
+          );
+          renderProfile(result.data.user);
+        } else {
+          setOutcome(
+            "login-outcome",
+            describeLoginRefusal(result, values.email),
+          );
+        }
+        return result;
+      });
+
+      onSubmit("forgot-form", async (values) => {
+        const result = await api.post("/auth/password/forgot", {
+          email: values.email,
+        });
+        // No cooldown comes back here: a repeat inside 60s is silently skipped.
+        setOutcome(
+          "forgot-outcome",
+          result.ok
+            ? 'requested — if the account exists, the reset link is in the <a href="/inbox">inbox</a>'
+            : escapeHtml(result.error),
+        );
+        return result;
+      });
+
+      onSubmit("magic-form", async (values) => {
+        const result = await api.post("/auth/magic-link/request", {
+          email: values.email,
+        });
+        // This same call is the resend; the cooldown comes back to count down.
+        if (typeof result.data?.resendAfterSeconds === "number") {
+          countDown(
+            "magic-outcome",
+            result.data.resendAfterSeconds,
+            "requested",
+          );
+        } else {
+          setOutcome("magic-outcome", escapeHtml(result.error));
+        }
+        return result;
+      });
+
+      document
+        .getElementById("profile-btn")
+        .addEventListener("click", async () => {
+          const result = await api.get("/auth/profile/get");
+          showResult(result);
+          renderProfile(result.ok ? result.data.user : null);
+          await refreshIdentity();
+        });
+
+      onSubmit("change-form", async (values, form) => {
+        const result = await api.post("/auth/password/change", {
+          currentPassword: values.currentPassword,
+          newPassword: values.newPassword,
+        });
+        if (result.ok) {
+          form.reset();
+        }
+        setOutcome(
+          "change-outcome",
+          result.ok
+            ? "changed — every other device is signed out, this one is not"
+            : escapeHtml(result.error),
+        );
+        return result;
+      });
+
+      document
+        .getElementById("logout-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/auth/session/logout");
+          showResult(result);
+          setOutcome(
+            "session-outcome",
+            result.ok ? "signed out on this device" : escapeHtml(result.error),
+          );
+          renderProfile(null);
+          await refreshIdentity();
+        });
+
+      document
+        .getElementById("logout-all-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/auth/session/logout-all");
+          showResult(result);
+          setOutcome(
+            "session-outcome",
+            result.ok
+              ? `signed out everywhere — ${escapeHtml(
+                  result.data.revoked,
+                )} sessions revoked`
+              : escapeHtml(result.error),
+          );
+          if (result.ok) {
+            renderProfile(null);
+          }
+          await refreshIdentity();
+        });
+
+      // Not an API call: a direct check that the session cookie is HttpOnly.
+      document.getElementById("cookie-btn").addEventListener("click", () => {
+        const leaked = /chakra_auth_token/.test(document.cookie);
+        showResult({
+          ok: !leaked,
+          status: leaked ? 500 : 200,
+          statusName: leaked
+            ? "LEAKED — HttpOnly is not doing its job"
+            : "not readable, as intended",
+          error: null,
+          request: { method: "JS", path: "document.cookie", body: null },
+          raw: { readableByJavaScript: document.cookie || "(nothing)" },
+          httpStatus: null,
+          ms: 0,
+        });
+      });
+
+      // --- the two-factor challenge ----------------------------------------
+      const challengeBoxes = [
+        ...document.querySelectorAll("#challenge-boxes input"),
+      ];
+      let usingBackupCode = false;
+
+      // Typing advances, backspace retreats, a pasted code fills the row.
+      challengeBoxes.forEach((box, index) => {
+        box.addEventListener("input", () => {
+          box.value = box.value.replace(/[^0-9]/g, "");
+          if (box.value && index < challengeBoxes.length - 1) {
+            challengeBoxes[index + 1].focus();
+          }
+        });
+        box.addEventListener("keydown", (event) => {
+          if (event.key === "Backspace" && !box.value && index > 0) {
+            challengeBoxes[index - 1].focus();
+          }
+        });
+        box.addEventListener("paste", (event) => {
+          const digits = (event.clipboardData.getData("text") ?? "")
+            .replace(/[^0-9]/g, "")
+            .slice(0, challengeBoxes.length);
+          if (!digits) {
+            return;
+          }
+          event.preventDefault();
+          digits.split("").forEach((digit, offset) => {
+            challengeBoxes[offset].value = digit;
+          });
+          challengeBoxes[
+            Math.min(digits.length, challengeBoxes.length - 1)
+          ].focus();
+        });
+      });
+
+      /**
+       * Show the challenge instead of the forms, or put the forms back.
+       *
+       * @param {boolean} on whether a challenge is open
+       * @param {string} [email] whose sign-in is waiting
+       * @returns {void}
+       */
+      function showChallengeScreen(on, email) {
+        document.getElementById("normal-screens").hidden = on;
+        document.getElementById("challenge-screen").hidden = !on;
+        document.getElementById("challenge-banner").hidden = true;
+        if (!on) {
+          challengeBoxes.forEach((box) => (box.value = ""));
+          document.getElementById("backup-input").value = "";
+          return;
+        }
+        document.getElementById("challenge-for").textContent =
+          `Enter the code for ${email ?? "this account"} to finish signing in.`;
+        challengeBoxes[0].focus();
+      }
+
+      document.getElementById("toggle-backup").addEventListener("click", () => {
+        usingBackupCode = !usingBackupCode;
+        document.getElementById("challenge-boxes").hidden = usingBackupCode;
+        document.getElementById("code-label").hidden = usingBackupCode;
+        document.getElementById("backup-label").hidden = !usingBackupCode;
+        document.getElementById("toggle-backup").textContent = usingBackupCode
+          ? "use the app code instead"
+          : "use a backup code instead";
+      });
+
+      onSubmit("challenge-form", async (values) => {
+        const code = usingBackupCode
+          ? String(values.backupCode ?? "").trim()
+          : challengeBoxes.map((box) => box.value).join("");
+        // No email is sent: the challenge cookie already names the account.
+        const result = await api.post("/auth/mfa/verify", { code: code });
+        if (result.ok) {
+          showChallengeScreen(false);
+          renderProfile(result.data?.user ?? null);
+        } else {
+          challengeBoxes.forEach((box) => (box.value = ""));
+        }
+        return result;
+      });
+
+      document
+        .getElementById("abandon-inline")
+        .addEventListener("click", async () => {
+          showResult(await api.post("/auth/mfa/abandon"));
+          showChallengeScreen(false);
+          await refreshIdentity();
+        });
+    </script>
+  </body>
+</html>

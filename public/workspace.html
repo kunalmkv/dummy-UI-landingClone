@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — workspace</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      section + section {
+        margin-top: 1.25rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.3rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      td code,
+      .mono {
+        font-family: var(--mono);
+      }
+      .scroll {
+        max-height: 24rem;
+        overflow: auto;
+      }
+      .level-yes {
+        color: var(--ok);
+      }
+      .level-partial {
+        color: var(--refused);
+      }
+      .level-no {
+        color: var(--muted);
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        margin-top: 0.4rem;
+      }
+      .swatch {
+        display: inline-block;
+        width: 1.1rem;
+        height: 1.1rem;
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        vertical-align: middle;
+      }
+      .result-line {
+        margin: 0.6rem 0 0;
+        font-size: 13px;
+      }
+      #workspace-picker {
+        margin-bottom: 1rem;
+      }
+      h3 {
+        margin: 0.8rem 0 0.3rem;
+        font-size: 13px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <div id="workspace-picker"></div>
+
+        <p class="note">
+          Everything here acts on the workspace the picker holds. The workspace
+          loads on its own when the picker changes; every other section loads
+          when you ask.
+        </p>
+
+        <section>
+          <h2>The workspace</h2>
+          <p class="hint">
+            GET /workspaces/:workspaceId — what it is, and what you may do in
+            it. Its version is what the edit form sends back as If-Match.
+          </p>
+          <button type="button" id="load-workspace">load</button>
+          <div id="ws-view" style="margin-top: 0.9rem">
+            <p class="muted">not loaded</p>
+          </div>
+        </section>
+
+        <section>
+          <h2>Edit settings</h2>
+          <p class="hint">
+            PATCH /workspaces/:workspaceId. Only the fields you changed are
+            sent. If-Match is the version you last read — if anyone changed the
+            workspace since (a branding save counts too), the server answers
+            VERSION_CONFLICT. Edit If-Match by hand to force one.
+          </p>
+          <form id="edit-form">
+            <label>name <input type="text" name="name" /></label>
+            <label>slug <input type="text" name="slug" /></label>
+            <label>
+              timezone (IANA, e.g. UTC or Asia/Kolkata)
+              <input type="text" name="timezone" />
+            </label>
+            <label>
+              defaultVertical (empty clears it)
+              <input type="text" name="defaultVertical" />
+            </label>
+            <label>
+              If-Match
+              <input type="text" name="ifMatch" id="if-match" />
+            </label>
+            <button type="submit">save changes</button>
+          </form>
+          <div id="conflict-note" hidden></div>
+        </section>
+
+        <section>
+          <h2>Is a slug free?</h2>
+          <p class="hint">
+            GET /workspaces/slug-available?slug= — a taken, reserved or
+            malformed slug comes back with a free one to offer. A workspace's
+            own slug reads as taken.
+          </p>
+          <form id="slug-form">
+            <div class="row">
+              <label
+                >slug <input type="text" name="slug" id="slug-ask"
+              /></label>
+              <button type="submit">check</button>
+            </div>
+          </form>
+          <div id="slug-result"></div>
+        </section>
+
+        <section>
+          <h2>Roles</h2>
+          <p class="hint">
+            GET /workspaces/:workspaceId/roles — the matrix the server enforces.
+            partial means only on what that role reaches or owns.
+          </p>
+          <button type="button" id="load-roles">load roles</button>
+          <div id="roles-view" class="scroll" style="margin-top: 0.9rem"></div>
+        </section>
+
+        <section>
+          <h2>My capabilities</h2>
+          <p class="hint">
+            GET /workspaces/:workspaceId/me/capabilities — what you may do here
+            right now, and which projects you reach.
+          </p>
+          <button type="button" id="load-capabilities">load mine</button>
+          <div id="capabilities-view" style="margin-top: 0.9rem"></div>
+        </section>
+
+        <section>
+          <h2>Visit</h2>
+          <p class="hint">
+            POST /workspaces/:workspaceId/visit — a page calls this when the
+            workspace opens. The workspace's lastVisit then names you; your
+            last-seen time moves at most once a minute.
+          </p>
+          <button type="button" id="record-visit">record a visit</button>
+        </section>
+
+        <section>
+          <h2>Apps</h2>
+          <p class="hint">
+            GET /workspaces/:workspaceId/apps — each app's state for you.
+            Joining a waitlist asks again safely; load again to see onWaitlist.
+          </p>
+          <button type="button" id="load-apps">load apps</button>
+          <div id="apps-view" style="margin-top: 0.9rem"></div>
+          <form id="waitlist-form" style="margin-top: 0.9rem">
+            <div class="row">
+              <label>
+                join a waitlist by app id (try one that does not exist)
+                <input type="text" name="appId" value="nonsense" />
+              </label>
+              <button type="submit">join</button>
+            </div>
+          </form>
+        </section>
+
+        <section>
+          <h2>Branding</h2>
+          <p class="hint">
+            GET and PUT /workspaces/:workspaceId/branding. The colour must be
+            #rrggbb. Turning the badge off needs a plan that allows it. The logo
+            is refused until uploads exist. Saving moves the workspace's
+            version.
+          </p>
+          <button type="button" id="load-branding">load branding</button>
+          <form id="branding-form" style="margin-top: 0.9rem">
+            <div class="row">
+              <label>
+                accentColor (empty clears it)
+                <input type="text" name="accentColor" id="accent-color" />
+              </label>
+              <span class="swatch" id="accent-swatch"></span>
+            </div>
+            <label>
+              emailSenderName (empty clears it)
+              <input type="text" name="emailSenderName" />
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" name="badgeEnabled" checked />
+              badgeEnabled
+            </label>
+            <label>
+              logoAssetId (optional — sent only when filled)
+              <input type="text" name="logoAssetId" />
+            </label>
+            <button type="submit">save branding</button>
+          </form>
+          <p class="result-line muted" id="branding-state"></p>
+        </section>
+
+        <section>
+          <h2>Command palette</h2>
+          <p class="hint">
+            GET /workspaces/:workspaceId/search?q= — projects, members and pages
+            whose name starts with what you type. At least 2 characters; the
+            page lets you send fewer so the refusal can be seen.
+          </p>
+          <form id="search-form">
+            <div class="row">
+              <label>q <input type="text" name="q" id="search-q" /></label>
+              <label>
+                limit per kind (1–5, optional)
+                <input type="text" name="limit" />
+              </label>
+              <button type="submit">search</button>
+            </div>
+          </form>
+          <div id="search-view"></div>
+        </section>
+
+        <section>
+          <h2>Resume and health</h2>
+          <p class="hint">
+            GET /workspaces/:workspaceId/resume — where you left off (empty
+            until a module adds items). GET /workspaces/:workspaceId/health —
+            how the connections are doing.
+          </p>
+          <button type="button" id="load-resume">load resume</button>
+          <button type="button" id="load-health">load health</button>
+          <div id="resume-view" style="margin-top: 0.9rem"></div>
+          <div id="health-view" style="margin-top: 0.9rem"></div>
+        </section>
+
+        <section>
+          <h2>Danger zone — archive and restore</h2>
+          <p class="hint">
+            Archiving makes the workspace read-only and frees its seats. It
+            needs a fresh password check first (POST /auth/identity/confirm with action
+            WORKSPACE_ARCHIVE), good for one archive within 5 minutes. Restore
+            needs no identity confirmation. Afterwards, load the workspace — and reload the
+            picker's list — to see the new state.
+          </p>
+          <form id="identity-confirm-form">
+            <label>
+              password
+              <input type="password" name="password" id="identity-confirm-password" />
+            </label>
+            <label>
+              or a current two-factor code (only if two-factor is on)
+              <input type="text" name="code" />
+            </label>
+            <button type="submit">1. confirm it is you</button>
+          </form>
+          <p class="result-line muted" id="identity-confirm-state"></p>
+          <form id="archive-form" style="margin-top: 0.9rem">
+            <label class="checkbox">
+              <input type="checkbox" name="emailMembers" />
+              email members that it was archived
+            </label>
+            <button type="submit">2. archive the workspace</button>
+          </form>
+          <div style="margin-top: 0.9rem">
+            <button type="button" id="restore">restore the workspace</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+      const EDITABLE_FIELDS = ["name", "slug", "timezone", "defaultVertical"];
+
+      // The workspace as last read: the edit form diffs against it.
+      let lastRead = null;
+      let loadedWorkspaceId = null;
+
+      /**
+       * The current workspace's path plus a suffix, or null (and a refusal in
+       * the panel) when the picker holds none.
+       */
+      function workspacePath(suffix = "") {
+        const workspaceId = requireWorkspaceId();
+        return workspaceId === null
+          ? null
+          : `/workspaces/${encodeURIComponent(workspaceId)}${suffix}`;
+      }
+
+      function muted(text) {
+        return `<p class="muted">${escapeHtml(text)}</p>`;
+      }
+
+      function refusalText(result) {
+        return result.error ?? result.statusName;
+      }
+
+      function formatDate(value) {
+        return value ? new Date(value).toLocaleString() : "—";
+      }
+
+      function chips(values) {
+        return `<div class="chips">${values
+          .map((value) => `<span class="chip">${escapeHtml(value)}</span>`)
+          .join("")}</div>`;
+      }
+
+      /** A two-column table of label → already-escaped html. */
+      function keyValueTable(rows) {
+        return `<table>${rows
+          .map(
+            ([label, html]) =>
+              `<tr><th>${escapeHtml(label)}</th><td>${html}</td></tr>`,
+          )
+          .join("")}</table>`;
+      }
+
+      /** Run fn on a button's click, disabling it meanwhile. */
+      function onClick(buttonId, fn) {
+        const button = document.getElementById(buttonId);
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          try {
+            await fn();
+          } finally {
+            button.disabled = false;
+          }
+        });
+      }
+
+      /** GET a workspace route, show it, and render it into a box on success. */
+      async function loadInto(suffix, boxId, render) {
+        const path = workspacePath(suffix);
+        if (path === null) {
+          return;
+        }
+        const result = await api.get(path);
+        showResult(result);
+        document.getElementById(boxId).innerHTML = result.ok
+          ? render(result.data)
+          : muted(refusalText(result));
+      }
+
+      // ─── the workspace ───────────────────────────────────────────────────
+
+      function describeLastVisit(lastVisit) {
+        return lastVisit?.at
+          ? `${escapeHtml(formatDate(lastVisit.at))} by <code>${escapeHtml(lastVisit.userId)}</code>`
+          : "never";
+      }
+
+      function renderWorkspaceView(workspace) {
+        const counts = workspace.counts ?? {};
+        document.getElementById("ws-view").innerHTML = keyValueTable([
+          ["name", `<strong>${escapeHtml(workspace.name)}</strong>`],
+          ["slug", `<code>${escapeHtml(workspace.slug)}</code>`],
+          [
+            "status",
+            `<span class="chip">${escapeHtml(workspace.status)}</span>${
+              workspace.readOnly ? ' <span class="chip">read-only</span>' : ""
+            }`,
+          ],
+          [
+            "version",
+            `<code id="ws-version">${escapeHtml(workspace.version)}</code>`,
+          ],
+          ["timezone", escapeHtml(workspace.timezone)],
+          ["defaultVertical", escapeHtml(workspace.defaultVertical ?? "—")],
+          [
+            "counts",
+            `members ${escapeHtml(counts.members)} · projects ${escapeHtml(
+              counts.projects,
+            )} · pending invites ${escapeHtml(counts.pendingInvites)}`,
+          ],
+          [
+            "lastVisit",
+            `<span id="ws-last-visit">${describeLastVisit(workspace.lastVisit)}</span>`,
+          ],
+          ["createdAt", escapeHtml(formatDate(workspace.createdAt))],
+          ["id", `<code>${escapeHtml(workspace.id)}</code>`],
+          ["orgId", `<code>${escapeHtml(workspace.orgId)}</code>`],
+          [
+            "capabilities",
+            `<details><summary>${escapeHtml(
+              (workspace.capabilities ?? []).length,
+            )} capabilities</summary>${chips(workspace.capabilities ?? [])}</details>`,
+          ],
+        ]);
+      }
+
+      /** Take a freshly read workspace: show it and arm the edit form. */
+      function renderWorkspace(workspace) {
+        lastRead = workspace;
+        renderWorkspaceView(workspace);
+        const form = document.getElementById("edit-form");
+        EDITABLE_FIELDS.forEach((field) => {
+          form.elements[field].value = workspace[field] ?? "";
+        });
+        form.elements.ifMatch.value = `"${workspace.version}"`;
+        document.getElementById("conflict-note").hidden = true;
+      }
+
+      async function loadWorkspace() {
+        const path = workspacePath();
+        if (path === null) {
+          return;
+        }
+        const result = await api.get(path);
+        showResult(result);
+        if (result.ok) {
+          renderWorkspace(result.data);
+        } else {
+          document.getElementById("ws-view").innerHTML = muted(
+            refusalText(result),
+          );
+        }
+      }
+
+      // ─── edit ────────────────────────────────────────────────────────────
+
+      /** Only the fields that differ from the version read; empty vertical is null. */
+      function changedSettings(values) {
+        const changes = {};
+        EDITABLE_FIELDS.forEach((field) => {
+          const typed = values[field].trim();
+          const value =
+            field === "defaultVertical" && typed === "" ? null : typed;
+          if (value !== (lastRead?.[field] ?? null)) {
+            changes[field] = value;
+          }
+        });
+        return changes;
+      }
+
+      function showConflict(sentVersion, current) {
+        const note = document.getElementById("conflict-note");
+        note.hidden = false;
+        note.innerHTML = `<p class="note" style="margin-top: 0.9rem">
+            <strong>VERSION_CONFLICT</strong> — you sent If-Match
+            <code>${escapeHtml(sentVersion)}</code>, but the workspace is now at
+            version <code id="conflict-version">${escapeHtml(current?.version)}</code>
+            (name "${escapeHtml(current?.name)}"). Load it again and redo your change.
+          </p>
+          <button type="button" id="conflict-reload">load the current version</button>`;
+        onClick("conflict-reload", loadWorkspace);
+      }
+
+      onSubmit("edit-form", async (values) => {
+        const path = workspacePath();
+        if (path === null) {
+          return undefined;
+        }
+        const ifMatch = values.ifMatch.trim();
+        const result = await api.patch(
+          path,
+          changedSettings(values),
+          ifMatch === "" ? {} : { "If-Match": ifMatch },
+        );
+        if (result.ok) {
+          renderWorkspace(result.data);
+        } else if (result.errorCode === "VERSION_CONFLICT") {
+          showConflict(ifMatch, result.errorDetails?.current);
+        }
+        return result;
+      });
+
+      // ─── slug ────────────────────────────────────────────────────────────
+
+      onSubmit("slug-form", async (values) => {
+        const result = await api.get(
+          `/workspaces/slug-available?slug=${encodeURIComponent(values.slug)}`,
+        );
+        const box = document.getElementById("slug-result");
+        if (!result.ok) {
+          box.innerHTML = muted(refusalText(result));
+        } else if (result.data.available) {
+          box.innerHTML = `<p class="result-line level-yes">"${escapeHtml(values.slug)}" is free</p>`;
+        } else {
+          box.innerHTML = `<p class="result-line">
+              <span class="level-partial">"${escapeHtml(values.slug)}" is not free</span>
+              — try <code id="slug-suggestion">${escapeHtml(result.data.suggestion)}</code>
+              <button type="button" id="use-suggestion">use it in the edit form</button>
+            </p>`;
+          document
+            .getElementById("use-suggestion")
+            .addEventListener("click", () => {
+              document.getElementById("edit-form").elements.slug.value =
+                result.data.suggestion;
+            });
+        }
+        return result;
+      });
+
+      // ─── roles and capabilities ──────────────────────────────────────────
+
+      function renderRoles(matrix) {
+        const myRole = currentWorkspace()?.role;
+        const head = matrix.roles
+          .map(
+            (role) =>
+              `<th>${escapeHtml(role)}${role === myRole ? " (you)" : ""}</th>`,
+          )
+          .join("");
+        const rows = matrix.capabilities
+          .map(
+            (row) =>
+              `<tr data-capability="${escapeHtml(row.capability)}"><td><code>${escapeHtml(
+                row.capability,
+              )}</code></td>${matrix.roles
+                .map((role) => {
+                  const level = row.levels[role];
+                  return `<td class="level-${escapeHtml(level)}" data-role="${escapeHtml(
+                    role,
+                  )}">${escapeHtml(level)}</td>`;
+                })
+                .join("")}</tr>`,
+          )
+          .join("");
+        return `<p class="muted">matrix version ${escapeHtml(matrix.version)}</p>
+          <table><thead><tr><th>capability</th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      function renderCapabilities(mine) {
+        const reach = Array.isArray(mine.reachableProjectIds)
+          ? mine.reachableProjectIds.length
+            ? chips(mine.reachableProjectIds)
+            : "no project"
+          : `<span class="chip">${escapeHtml(mine.reachableProjectIds)}</span>`;
+        return keyValueTable([
+          ["projects reached", `<span id="reach">${reach}</span>`],
+          [`capabilities (${mine.workspace.length})`, chips(mine.workspace)],
+        ]);
+      }
+
+      onClick("load-roles", () =>
+        loadInto("/roles", "roles-view", renderRoles),
+      );
+      onClick("load-capabilities", () =>
+        loadInto("/me/capabilities", "capabilities-view", renderCapabilities),
+      );
+
+      // ─── visit ───────────────────────────────────────────────────────────
+
+      onClick("record-visit", async () => {
+        const path = workspacePath("/visit");
+        if (path !== null) {
+          showResult(await api.post(path, {}));
+        }
+      });
+
+      // ─── apps ────────────────────────────────────────────────────────────
+
+      /** Returns the result for the caller to show, or undefined without a workspace. */
+      async function joinWaitlist(appId) {
+        const path = workspacePath(
+          `/apps/${encodeURIComponent(appId)}/waitlist`,
+        );
+        return path === null ? undefined : await api.post(path, {});
+      }
+
+      function renderApps(apps) {
+        const rows = apps
+          .map(
+            (app) => `<tr data-app="${escapeHtml(app.key)}">
+              <td><strong>${escapeHtml(app.name)}</strong><br /><code>${escapeHtml(app.key)}</code></td>
+              <td><span class="chip">${escapeHtml(app.state)}</span></td>
+              <td>${escapeHtml(app.requiredPlan ?? "—")}</td>
+              <td>${escapeHtml(app.requiredRole ?? "—")}</td>
+              <td class="on-waitlist">${app.onWaitlist ? "yes" : "no"}</td>
+              <td><button type="button" data-join="${escapeHtml(app.key)}">join waitlist</button></td>
+            </tr>`,
+          )
+          .join("");
+        return `<table><thead><tr><th>app</th><th>state</th><th>needs plan</th>
+          <th>needs role</th><th>on waitlist</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      onClick("load-apps", async () => {
+        await loadInto("/apps", "apps-view", renderApps);
+        document
+          .querySelectorAll("#apps-view [data-join]")
+          .forEach((button) => {
+            button.addEventListener("click", async () => {
+              const result = await joinWaitlist(button.dataset.join);
+              if (result !== undefined) {
+                showResult(result);
+              }
+            });
+          });
+      });
+
+      onSubmit("waitlist-form", (values) => joinWaitlist(values.appId.trim()));
+
+      // ─── branding ────────────────────────────────────────────────────────
+
+      function paintSwatch(color) {
+        // Only a colour the server itself would accept ever reaches a style.
+        document.getElementById("accent-swatch").style.background =
+          HEX_COLOR.test(color) ? color : "transparent";
+      }
+
+      function renderBranding(branding) {
+        const form = document.getElementById("branding-form");
+        form.elements.accentColor.value = branding.accentColor ?? "";
+        form.elements.emailSenderName.value = branding.emailSenderName ?? "";
+        form.elements.badgeEnabled.checked = branding.badgeEnabled === true;
+        form.elements.logoAssetId.value = "";
+        paintSwatch(branding.accentColor ?? "");
+        document.getElementById("branding-state").textContent =
+          `badge ${branding.badgeEnabled ? "shown" : "hidden"} · the plan ${
+            branding.badgeRemovable ? "lets" : "does not let"
+          } you remove it · logoUrl ${branding.logoUrl ?? "none"} · workspace version ${
+            branding.version
+          }`;
+      }
+
+      onClick("load-branding", async () => {
+        const path = workspacePath("/branding");
+        if (path === null) {
+          return;
+        }
+        const result = await api.get(path);
+        showResult(result);
+        if (result.ok) {
+          renderBranding(result.data);
+        }
+      });
+
+      onSubmit("branding-form", async (values) => {
+        const path = workspacePath("/branding");
+        if (path === null) {
+          return undefined;
+        }
+        const body = {
+          accentColor: values.accentColor.trim() || null,
+          emailSenderName: values.emailSenderName.trim() || null,
+          badgeEnabled: values.badgeEnabled === "on",
+        };
+        if (values.logoAssetId.trim() !== "") {
+          body.logoAssetId = values.logoAssetId.trim();
+        }
+        const result = await api.put(path, body);
+        if (result.ok) {
+          renderBranding(result.data);
+        }
+        return result;
+      });
+
+      document
+        .getElementById("accent-color")
+        .addEventListener("input", (event) =>
+          paintSwatch(event.target.value.trim()),
+        );
+
+      // ─── command palette ─────────────────────────────────────────────────
+
+      function renderSearch(data) {
+        if (data.groups.length === 0) {
+          return muted("no matches");
+        }
+        return data.groups
+          .map(
+            (group) => `<h3>${escapeHtml(group.kind)}</h3>
+              <table><thead><tr><th>label</th><th>sublabel</th><th>href</th><th>id</th></tr></thead>
+              <tbody>${group.items
+                .map(
+                  (item) => `<tr><td>${escapeHtml(item.label)}</td>
+                    <td>${escapeHtml(item.sublabel ?? "—")}</td>
+                    <td><code>${escapeHtml(item.href)}</code></td>
+                    <td><code>${escapeHtml(item.id)}</code></td></tr>`,
+                )
+                .join("")}</tbody></table>`,
+          )
+          .join("");
+      }
+
+      onSubmit("search-form", async (values) => {
+        const limit = values.limit.trim();
+        const query = `?q=${encodeURIComponent(values.q)}${
+          limit === "" ? "" : `&limit=${encodeURIComponent(limit)}`
+        }`;
+        const path = workspacePath(`/search${query}`);
+        if (path === null) {
+          return undefined;
+        }
+        const result = await api.get(path);
+        document.getElementById("search-view").innerHTML = result.ok
+          ? renderSearch(result.data)
+          : muted(refusalText(result));
+        return result;
+      });
+
+      // ─── resume and health ───────────────────────────────────────────────
+
+      function renderResume(items) {
+        if (items.length === 0) {
+          return muted("nothing to pick up again — no module adds items yet");
+        }
+        const columns = Object.keys(items[0]);
+        return `<table><thead><tr>${columns
+          .map((column) => `<th>${escapeHtml(column)}</th>`)
+          .join("")}</tr></thead><tbody>${items
+          .map(
+            (item) =>
+              `<tr>${columns
+                .map(
+                  (column) =>
+                    `<td>${escapeHtml(JSON.stringify(item[column]))}</td>`,
+                )
+                .join("")}</tr>`,
+          )
+          .join("")}</tbody></table>`;
+      }
+
+      function renderHealth(health) {
+        const rows = Object.entries(health)
+          .map(
+            ([
+              area,
+              counts,
+            ]) => `<tr data-area="${escapeHtml(area)}"><td>${escapeHtml(area)}</td>
+              <td class="level-yes">${escapeHtml(counts.ok ?? "—")}</td>
+              <td>${escapeHtml(counts.pending ?? "—")}</td>
+              <td class="level-partial">${escapeHtml(counts.failing ?? "—")}</td></tr>`,
+          )
+          .join("");
+        return `<table><thead><tr><th>connection</th><th>ok</th><th>pending</th>
+          <th>failing</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      onClick("load-resume", () =>
+        loadInto("/resume", "resume-view", renderResume),
+      );
+      onClick("load-health", () =>
+        loadInto("/health", "health-view", renderHealth),
+      );
+
+      // ─── archive and restore ─────────────────────────────────────────────
+
+      onSubmit("identity-confirm-form", async (values, form) => {
+        const body = { action: "WORKSPACE_ARCHIVE" };
+        if (values.password !== "") {
+          body.password = values.password;
+        }
+        if (values.code.trim() !== "") {
+          body.code = values.code.trim();
+        }
+        const result = await api.post("/auth/identity/confirm", body);
+        form.elements.password.value = "";
+        const state = document.getElementById("identity-confirm-state");
+        state.textContent = result.ok
+          ? `granted for ${result.data.action} until ${new Date(
+              Date.now() + result.data.expiresInSeconds * 1000,
+            ).toLocaleTimeString()} — archive now`
+          : `not granted: ${refusalText(result)}`;
+        return result;
+      });
+
+      onSubmit("archive-form", async (values) => {
+        const path = workspacePath("/archive");
+        if (path === null) {
+          return undefined;
+        }
+        const result = await api.post(path, {
+          emailMembers: values.emailMembers === "on",
+        });
+        document.getElementById("identity-confirm-state").textContent = "";
+        return result;
+      });
+
+      onClick("restore", async () => {
+        const path = workspacePath("/restore");
+        if (path !== null) {
+          showResult(await api.post(path, {}));
+        }
+      });
+
+      // ─── the picker ──────────────────────────────────────────────────────
+
+      onClick("load-workspace", loadWorkspace);
+
+      // Load only when the picked workspace really changed, so reloading the
+      // picker's list never replaces the panel's last answer.
+      onWorkspaceChange((workspace) => {
+        if (workspace === null) {
+          loadedWorkspaceId = null;
+          lastRead = null;
+          document.getElementById("ws-view").innerHTML = muted(
+            "no workspace picked",
+          );
+          return;
+        }
+        if (workspace.id !== loadedWorkspaceId) {
+          loadedWorkspaceId = workspace.id;
+          loadWorkspace();
+        }
+      });
+    </script>
+  </body>
+</html>

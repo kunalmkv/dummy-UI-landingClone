@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — webhooks</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main {
+        max-width: 1400px;
+        grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      }
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      #workspace-picker {
+        margin-bottom: 1rem;
+      }
+      h3 {
+        margin: 1rem 0 0.2rem;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table.kv th {
+        width: 10rem;
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      td code {
+        display: block;
+        font: 11px var(--mono);
+        color: var(--muted);
+        word-break: break-all;
+      }
+      td.row-actions button {
+        padding: 0.2rem 0.45rem;
+        font-size: 12px;
+        margin: 0 0.25rem 0.25rem 0;
+      }
+      fieldset {
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        margin: 0 0 0.6rem;
+        padding: 0.5rem 0.7rem 0.1rem;
+      }
+      legend {
+        color: var(--muted);
+        font-size: 12.5px;
+        padding: 0 0.3rem;
+      }
+      .variables {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        margin: -0.3rem 0 0.7rem;
+      }
+      .variables button {
+        padding: 0.15rem 0.4rem;
+        font: 11px var(--mono);
+      }
+      .pii {
+        color: var(--refused);
+      }
+      .state-ACTIVE,
+      .state-DELIVERED {
+        color: var(--ok);
+      }
+      .state-DISABLED,
+      .state-FAILED {
+        color: var(--dead);
+      }
+      .state-SUSPENDED,
+      .state-RETRIABLE {
+        color: var(--refused);
+      }
+      .secret code {
+        display: block;
+        margin: 0.4rem 0;
+        padding: 0.5rem;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        font: 13px var(--mono);
+        word-break: break-all;
+      }
+      .box {
+        margin-top: 0.8rem;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.7rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <div id="workspace-picker"></div>
+
+        <p class="note">
+          Reading endpoints and deliveries needs a workspace
+          <strong>ADMIN or OWNER</strong> (an organization OWNER or ADMIN counts
+          as ADMIN); so does changing them. An archived workspace still reads
+          but refuses every write. URLs must be https on port 443 or 80 and
+          resolve to a public address: <code>localhost</code> and private
+          addresses are refused as <strong>URL_NOT_ALLOWED</strong> by design —
+          use a public host such as <code>https://example.com/hooks</code>.
+        </p>
+
+        <section>
+          <h2>Caller</h2>
+          <p class="hint">
+            Blank: your cookie. A secret here (scope webhooks or admin, from
+            <a href="/tokens">api tokens</a>) goes as Authorization: Bearer on
+            every workspace call below and wins over the cookie. The catalogue
+            is cookie-only, so it never gets it. Never stored.
+          </p>
+          <label>
+            API token secret — optional
+            <input type="text" id="bearer" autocomplete="off" />
+          </label>
+        </section>
+
+        <section>
+          <h2>Catalogue — GET /webhook-events · GET /webhook-variables</h2>
+          <p class="hint">
+            The same for everyone signed in. Loaded on open to fill the event
+            boxes and the variable buttons below. Only member.invited is ever
+            sent today (by a workspace invitation); the other events receive
+            tests only.
+          </p>
+          <div class="actions">
+            <button type="button" id="events-button">
+              GET /webhook-events
+            </button>
+            <button type="button" id="variables-button">
+              GET /webhook-variables
+            </button>
+          </div>
+          <div id="catalogue" class="box"></div>
+        </section>
+
+        <section>
+          <h2>Endpoints — GET /workspaces/:id/webhook-endpoints</h2>
+          <p class="hint">
+            Newest first. Badge from status, not health: a SUSPENDED endpoint
+            (its workspace was archived) still shows health healthy or failing.
+            Header values and the signing secret are never read back. Test sends
+            one sample event now and can take up to 10 seconds; any receiver
+            status answers 200, so read httpStatus.
+          </p>
+          <button type="button" id="refresh-endpoints">refresh</button>
+          <div id="endpoints-table" class="table-wrap">
+            <p class="muted">not loaded</p>
+          </div>
+          <div id="rotate-secret" class="box"></div>
+          <div id="test-result" class="box"></div>
+        </section>
+
+        <section>
+          <h2>New endpoint — POST …/webhook-endpoints</h2>
+          <p class="hint">
+            Answers 201 with <code>signingSecret</code> this one time. The plan
+            caps endpoints per workspace, counting every status (free 2, starter
+            5, growth 20, scale 50). No Idempotency-Key: a second click saves a
+            second endpoint.
+          </p>
+          <form id="create-form">
+            <label>
+              name — 1 to 100 characters
+              <input type="text" name="name" value="CRM" />
+            </label>
+            <div class="row">
+              <label>
+                url — https, a public host name
+                <input
+                  type="text"
+                  name="url"
+                  value="https://example.com/hooks"
+                />
+              </label>
+              <label style="flex: 0 0 6rem">
+                method
+                <select name="method">
+                  <option>POST</option>
+                  <option>PUT</option>
+                </select>
+              </label>
+            </div>
+            <fieldset>
+              <legend>events — at least one</legend>
+              <div id="create-events" class="muted">catalogue not loaded</div>
+            </fieldset>
+            <label>
+              bodyTemplate — blank sends the whole event as JSON
+              <textarea
+                name="bodyTemplate"
+                id="create-template"
+                rows="3"
+              ></textarea>
+            </label>
+            <div class="variables" data-target="#create-template"></div>
+            <label>
+              headers — one per line, <code>Name: value</code>, up to 10
+              <textarea
+                name="headers"
+                rows="2"
+                placeholder="X-Api-Key: abc123"
+              ></textarea>
+            </label>
+            <button type="submit">save endpoint</button>
+          </form>
+          <div id="create-outcome" class="box"></div>
+        </section>
+
+        <section>
+          <h2>Change an endpoint — PATCH …/webhook-endpoints/:endpointId</h2>
+          <p class="hint">
+            "select" on a row fills the id. Every blank field is left out and
+            left alone; sending nothing is refused. events and headers replace
+            the whole list, and header values are never read back, so send every
+            header again. status ACTIVE turns a DISABLED endpoint back on and
+            resets its failure count.
+          </p>
+          <form id="edit-form">
+            <label>
+              endpointId
+              <input type="text" name="endpointId" id="edit-endpoint-id" />
+            </label>
+            <div class="row">
+              <label>
+                name
+                <input type="text" name="name" id="edit-name" />
+              </label>
+              <label style="flex: 0 0 6rem">
+                method
+                <select name="method">
+                  <option value="">—</option>
+                  <option>POST</option>
+                  <option>PUT</option>
+                </select>
+              </label>
+              <label style="flex: 0 0 8rem">
+                status
+                <select name="status">
+                  <option value="">—</option>
+                  <option>ACTIVE</option>
+                  <option>DISABLED</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              url
+              <input type="text" name="url" id="edit-url" />
+            </label>
+            <fieldset>
+              <legend>events — none ticked leaves them alone</legend>
+              <div id="edit-events" class="muted">catalogue not loaded</div>
+            </fieldset>
+            <label>
+              bodyTemplate
+              <textarea
+                name="bodyTemplate"
+                id="edit-template"
+                rows="3"
+              ></textarea>
+            </label>
+            <div class="variables" data-target="#edit-template"></div>
+            <label class="checkbox">
+              <input type="checkbox" name="templateNull" />
+              send bodyTemplate: null — back to the whole event
+            </label>
+            <label>
+              headers — one per line, <code>Name: value</code>
+              <textarea name="headers" rows="2"></textarea>
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" name="headersClear" />
+              send headers: [] — remove every header
+            </label>
+            <button type="submit">save changes</button>
+          </form>
+          <div id="edit-outcome" class="box"></div>
+        </section>
+
+        <section>
+          <h2>Deliveries — GET …/webhook-endpoints/:endpointId/deliveries</h2>
+          <p class="hint">
+            One endpoint's log, newest first, without payloads (open one for
+            that). Tests are listed too (eventId evt_test_…). Kept 30 days. A
+            deleted endpoint's log answers 404, though each delivery still opens
+            by id. Blank filters are not sent; "next page" sends the same
+            filters with the cursor.
+          </p>
+          <form id="deliveries-form">
+            <label>
+              endpointId
+              <input
+                type="text"
+                name="endpointId"
+                id="deliveries-endpoint-id"
+              />
+            </label>
+            <div class="row">
+              <label>
+                status
+                <select name="status">
+                  <option value="">any</option>
+                  <option>PENDING</option>
+                  <option>RETRIABLE</option>
+                  <option>DELIVERED</option>
+                  <option>FAILED</option>
+                </select>
+              </label>
+              <label>
+                event
+                <select name="event" id="deliveries-event">
+                  <option value="">any</option>
+                </select>
+              </label>
+              <label>
+                limit — 1 to 100
+                <input type="text" name="limit" inputmode="numeric" />
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                from — e.g. 2026-09-01
+                <input type="text" name="from" />
+              </label>
+              <label>
+                to
+                <input type="text" name="to" />
+              </label>
+            </div>
+            <button type="submit">list deliveries</button>
+          </form>
+          <div id="deliveries-table" class="table-wrap"></div>
+          <div class="actions">
+            <button type="button" id="next-page" hidden>next page</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>
+            One delivery — GET / redeliver …/webhook-deliveries/:deliveryId
+          </h2>
+          <p class="hint">
+            Open shows the payload (the event before any template) and the
+            receiver's last reply. Redeliver queues it again with a fresh five
+            tries and answers PENDING at once — open it again in about 10
+            seconds for the outcome. The same Idempotency-Key for the same
+            delivery within 24 hours replays the first answer; blank sends none.
+          </p>
+          <form id="delivery-form">
+            <div class="row">
+              <label>
+                deliveryId
+                <input type="text" name="deliveryId" id="delivery-id" />
+              </label>
+              <button type="submit">open</button>
+            </div>
+          </form>
+          <div class="row">
+            <label>
+              Idempotency-Key — optional
+              <input type="text" id="idempotency-key" />
+            </label>
+            <button type="button" id="new-key">new key</button>
+            <button type="button" id="redeliver-button">redeliver</button>
+          </div>
+          <div id="delivery-detail" class="box"></div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // The catalogue and the endpoint list as last loaded.
+      let events = [];
+      let variables = [];
+      let endpoints = [];
+      let nextCursor = null;
+
+      const byId = (id) => document.getElementById(id);
+      const enc = encodeURIComponent;
+
+      /**
+       * Call a route under the picked workspace, as the token when one is
+       * pasted in the caller box, else as the cookie.
+       *
+       * @returns {Promise<object|undefined>} undefined when none is picked
+       */
+      async function workspaceCall(method, suffix, body, headers = {}) {
+        const workspaceId = requireWorkspaceId();
+        if (workspaceId === null) {
+          return undefined;
+        }
+        const secret = byId("bearer").value.trim();
+        return api.call(
+          method,
+          `/workspaces/${enc(workspaceId)}${suffix}`,
+          body,
+          secret === ""
+            ? headers
+            : { ...headers, Authorization: `Bearer ${secret}` },
+        );
+      }
+
+      // A refusal made here, before anything is sent.
+      function localRefusal(statusName, error) {
+        showResult({
+          ok: false,
+          status: null,
+          statusName: statusName,
+          error: error,
+          request: { method: "—", path: "—", body: null },
+          raw: null,
+          ms: 0,
+        });
+      }
+
+      function when(iso) {
+        return iso ? new Date(iso).toLocaleString() : "—";
+      }
+
+      function refusalHtml(result) {
+        const unknown = result.errorDetails?.unknown;
+        return `<p class="error-line">${escapeHtml(
+          result.error ?? result.statusName,
+        )}${
+          Array.isArray(unknown)
+            ? ` — unknown: ${escapeHtml(unknown.join(", "))}`
+            : ""
+        }</p>`;
+      }
+
+      function stateChip(state) {
+        return `<span class="chip state-${escapeHtml(state)}">${escapeHtml(
+          state,
+        )}</span>`;
+      }
+
+      // "Name: value" lines into [{ name, value }], blank lines dropped.
+      function parseHeaderLines(text) {
+        return text
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line !== "")
+          .map((line) => {
+            const colon = line.indexOf(":");
+            return colon === -1
+              ? { name: line, value: "" }
+              : {
+                  name: line.slice(0, colon).trim(),
+                  value: line.slice(colon + 1).trim(),
+                };
+          });
+      }
+
+      function renderSecret(containerId, heading, secret, extra = "") {
+        byId(containerId).innerHTML = `<div class="panel ok secret">
+          <div class="panel-head"><strong>${escapeHtml(heading)}</strong>
+            <span class="muted">shown this one time; it cannot be read back</span>
+          </div>
+          <code data-field="secret">${escapeHtml(secret)}</code>
+          <button type="button" data-copy="${escapeHtml(secret)}">copy</button>
+          ${extra}
+        </div>`;
+      }
+
+      // --- catalogue -----------------------------------------------------
+
+      function eventChecks(checked) {
+        return events
+          .map(
+            (event) => `<label class="checkbox">
+              <input type="checkbox" name="events" value="${escapeHtml(
+                event.key,
+              )}"${checked.includes(event.key) ? " checked" : ""} />
+              ${escapeHtml(event.key)} — ${escapeHtml(event.label)}</label>`,
+          )
+          .join("");
+      }
+
+      // The event boxes and the log's event filter.
+      function renderEventPickers() {
+        byId("create-events").className = "";
+        byId("create-events").innerHTML = eventChecks(["member.invited"]);
+        byId("edit-events").className = "";
+        byId("edit-events").innerHTML = eventChecks([]);
+        byId("deliveries-event").innerHTML =
+          '<option value="">any</option>' +
+          events
+            .map((event) => `<option>${escapeHtml(event.key)}</option>`)
+            .join("");
+      }
+
+      // Buttons that insert a {{variable}} into the template box they sit under.
+      function renderVariableButtons() {
+        document.querySelectorAll(".variables").forEach((container) => {
+          container.innerHTML = variables
+            .map(
+              (variable) =>
+                `<button type="button" data-insert="${escapeHtml(
+                  variable.token,
+                )}" title="${escapeHtml(variable.label)}">${escapeHtml(
+                  variable.token,
+                )}${variable.pii ? ' <span class="pii">PII</span>' : ""}</button>`,
+            )
+            .join("");
+        });
+      }
+
+      function renderCatalogue() {
+        byId("catalogue").innerHTML = `
+          <details id="events-list"><summary>${events.length} events</summary>
+            <table><thead><tr><th>key</th><th>label</th><th>samplePayload</th>
+            </tr></thead><tbody>${events
+              .map(
+                (event) => `<tr><td>${escapeHtml(event.key)}</td>
+                  <td>${escapeHtml(event.label)}</td>
+                  <td><pre>${escapeHtml(
+                    JSON.stringify(event.samplePayload, null, 2),
+                  )}</pre></td></tr>`,
+              )
+              .join("")}</tbody></table></details>
+          <details id="variables-list"><summary>${variables.length} variables
+            — PII ones identify a person, so think before sending them to a
+            third party</summary>
+            <table><thead><tr><th>token</th><th>label</th><th>pii</th>
+            </tr></thead><tbody>${variables
+              .map(
+                (variable) => `<tr><td>${escapeHtml(variable.token)}</td>
+                  <td>${escapeHtml(variable.label)}</td>
+                  <td>${variable.pii ? '<span class="pii">PII</span>' : ""}</td></tr>`,
+              )
+              .join("")}</tbody></table></details>`;
+      }
+
+      async function loadEvents() {
+        const result = await api.get("/webhook-events");
+        if (result.ok) {
+          events = result.data;
+          renderEventPickers();
+          renderCatalogue();
+        }
+        return result;
+      }
+
+      async function loadVariables() {
+        const result = await api.get("/webhook-variables");
+        if (result.ok) {
+          variables = result.data;
+          renderVariableButtons();
+          renderCatalogue();
+        }
+        return result;
+      }
+
+      // --- endpoints -----------------------------------------------------
+
+      function endpointRow(endpoint) {
+        const health = endpoint.health;
+        const headerNames = endpoint.headers.map((header) => header.name);
+        return `<tr data-endpoint-id="${escapeHtml(endpoint.endpointId)}">
+          <td data-field="name">${escapeHtml(endpoint.name)}
+            <code>${escapeHtml(endpoint.endpointId)}</code></td>
+          <td data-field="url">${escapeHtml(endpoint.method)}
+            ${escapeHtml(endpoint.url)}
+            <code>${
+              endpoint.bodyTemplate === null
+                ? "whole event"
+                : `template ${escapeHtml(endpoint.bodyTemplate)}`
+            }</code></td>
+          <td data-field="events">${endpoint.events
+            .map((event) => `<span class="chip">${escapeHtml(event)}</span>`)
+            .join(" ")}</td>
+          <td data-field="status">${stateChip(endpoint.status)}
+            <code>health ${escapeHtml(health.state)} · 24h ${escapeHtml(
+              health.successRate24h ?? "—",
+            )}% · ${escapeHtml(health.consecutiveFailures)} failed in a row</code></td>
+          <td data-field="secret">··${escapeHtml(endpoint.signingSecretLast4)}</td>
+          <td data-field="headers">${escapeHtml(headerNames.join(", ") || "—")}</td>
+          <td data-field="deliveries">${escapeHtml(endpoint.deliveryCount)}
+            <code>${escapeHtml(endpoint.pendingRetries)} retrying</code></td>
+          <td class="row-actions">
+            <button type="button" data-action="select">select</button>
+            <button type="button" data-action="test">test</button>
+            <button type="button" data-action="rotate">rotate secret</button>
+            <button type="button" data-action="deliveries">deliveries</button>
+            <button type="button" data-action="delete">delete</button>
+          </td>
+        </tr>`;
+      }
+
+      function renderEndpoints(result) {
+        const container = byId("endpoints-table");
+        if (!result.ok) {
+          container.innerHTML = refusalHtml(result);
+          return;
+        }
+        endpoints = result.data;
+        container.innerHTML = endpoints.length
+          ? `<table>
+              <thead><tr><th>name</th><th>sends</th><th>events</th>
+                <th>status</th><th>secret</th><th>headers</th>
+                <th>deliveries</th><th></th></tr></thead>
+              <tbody>${endpoints.map(endpointRow).join("")}</tbody>
+            </table>`
+          : '<p class="muted">no endpoints</p>';
+      }
+
+      /**
+       * Reload the list. The caller decides whether the panel shows it.
+       *
+       * @returns {Promise<object|undefined>}
+       */
+      async function loadEndpoints() {
+        const result = await workspaceCall("GET", "/webhook-endpoints");
+        if (result !== undefined) {
+          renderEndpoints(result);
+        }
+        return result;
+      }
+
+      function selectEndpoint(endpointId) {
+        const endpoint = endpoints.find(
+          (candidate) => candidate.endpointId === endpointId,
+        );
+        byId("edit-endpoint-id").value = endpointId;
+        byId("deliveries-endpoint-id").value = endpointId;
+        byId("edit-name").placeholder = endpoint?.name ?? "";
+        byId("edit-url").placeholder = endpoint?.url ?? "";
+        return undefined;
+      }
+
+      function renderTest(result) {
+        const container = byId("test-result");
+        if (!result.ok) {
+          container.innerHTML = refusalHtml(result);
+          return;
+        }
+        const test = result.data;
+        let outcome = `receiver answered <strong data-field="httpStatus">${escapeHtml(
+          test.httpStatus,
+        )}</strong> in ${escapeHtml(test.latencyMs)} ms`;
+        if (test.latencyMs === null) {
+          outcome = "not sent: the endpoint is not ACTIVE";
+        } else if (test.httpStatus === null) {
+          outcome =
+            "nothing answered (timed out, did not resolve, refused, or inside our network) — open the delivery for lastError";
+        }
+        container.innerHTML = `<p>test → ${outcome}
+            · delivery <span class="chip">${escapeHtml(test.deliveryId)}</span>
+            <button type="button" data-open-delivery="${escapeHtml(
+              test.deliveryId,
+            )}">open</button></p>
+          ${
+            test.responseSnippet === null
+              ? ""
+              : `<details><summary>responseSnippet</summary><pre>${escapeHtml(
+                  test.responseSnippet,
+                )}</pre></details>`
+          }`;
+      }
+
+      async function testEndpoint(endpointId) {
+        byId("test-result").innerHTML =
+          '<p class="muted">sending the test — up to 10 seconds…</p>';
+        const result = await workspaceCall(
+          "POST",
+          `/webhook-endpoints/${enc(endpointId)}/test`,
+          {},
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        renderTest(result);
+        if (result.ok) {
+          byId("delivery-id").value = result.data.deliveryId;
+          // Its health and delivery count just changed.
+          await loadEndpoints();
+        }
+        return result;
+      }
+
+      async function rotateSecret(endpointId) {
+        const result = await workspaceCall(
+          "POST",
+          `/webhook-endpoints/${enc(endpointId)}/rotate-secret`,
+          {},
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        if (result.ok) {
+          renderSecret(
+            "rotate-secret",
+            "new signing secret",
+            result.data.signingSecret,
+            `<p class="muted">the old one keeps signing beside it until
+              <span data-field="grace">${escapeHtml(
+                when(result.data.previousSecretValidUntil),
+              )}</span></p>`,
+          );
+          await loadEndpoints();
+        } else {
+          byId("rotate-secret").innerHTML = refusalHtml(result);
+        }
+        return result;
+      }
+
+      async function deleteEndpoint(endpointId) {
+        const result = await workspaceCall(
+          "DELETE",
+          `/webhook-endpoints/${enc(endpointId)}`,
+        );
+        if (result?.ok) {
+          await loadEndpoints();
+        }
+        return result;
+      }
+
+      function showEndpointDeliveries(endpointId) {
+        byId("deliveries-endpoint-id").value = endpointId;
+        return loadDeliveries();
+      }
+
+      const ROW_ACTIONS = {
+        select: selectEndpoint,
+        test: testEndpoint,
+        rotate: rotateSecret,
+        deliveries: showEndpointDeliveries,
+        delete: deleteEndpoint,
+      };
+
+      // --- deliveries ----------------------------------------------------
+
+      function deliveryRow(delivery) {
+        return `<tr data-delivery-id="${escapeHtml(delivery.deliveryId)}">
+          <td>${escapeHtml(delivery.deliveryId)}
+            <code data-field="eventId">${escapeHtml(delivery.eventId)}</code></td>
+          <td data-field="event">${escapeHtml(delivery.event)}</td>
+          <td data-field="status">${stateChip(delivery.status)}
+            <code>${escapeHtml(delivery.attempts)} attempts</code></td>
+          <td>${escapeHtml(delivery.lastStatusCode ?? "—")}
+            <code>${escapeHtml(delivery.lastError ?? "")}</code></td>
+          <td>${escapeHtml(delivery.latencyMs ?? "—")} ms</td>
+          <td>${escapeHtml(when(delivery.createdAt))}
+            <code>next ${escapeHtml(when(delivery.nextAttemptAt))}</code></td>
+          <td class="row-actions">
+            <button type="button" data-action="open">open</button>
+            <button type="button" data-action="redeliver">redeliver</button>
+          </td>
+        </tr>`;
+      }
+
+      /**
+       * One page of the log with the form's filters; appends when given a
+       * cursor. The caller shows the result.
+       *
+       * @param {string|null} [cursor]
+       * @returns {Promise<object|undefined>}
+       */
+      async function loadDeliveries(cursor = null) {
+        const form = byId("deliveries-form");
+        const endpointId = form.elements.endpointId.value.trim();
+        if (endpointId === "") {
+          localRefusal("NO ENDPOINT", 'press "deliveries" on an endpoint row');
+          return undefined;
+        }
+        const params = new URLSearchParams();
+        for (const name of ["status", "event", "from", "to", "limit"]) {
+          const value = form.elements[name].value.trim();
+          if (value !== "") {
+            params.set(name, value);
+          }
+        }
+        if (cursor !== null) {
+          params.set("cursor", cursor);
+        }
+        const query = params.toString();
+        const result = await workspaceCall(
+          "GET",
+          `/webhook-endpoints/${enc(endpointId)}/deliveries${
+            query ? `?${query}` : ""
+          }`,
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        const container = byId("deliveries-table");
+        if (!result.ok) {
+          container.innerHTML = refusalHtml(result);
+          byId("next-page").hidden = true;
+          return result;
+        }
+        const rows = result.data.items.map(deliveryRow).join("");
+        const body = container.querySelector("tbody");
+        if (cursor !== null && body !== null) {
+          body.insertAdjacentHTML("beforeend", rows);
+        } else {
+          container.innerHTML = rows
+            ? `<table><thead><tr><th>delivery</th><th>event</th><th>status</th>
+                <th>last answer</th><th>latency</th><th>queued</th><th></th>
+              </tr></thead><tbody>${rows}</tbody></table>`
+            : '<p class="muted">no deliveries</p>';
+        }
+        nextCursor = result.data.nextCursor;
+        byId("next-page").hidden = nextCursor === null;
+        return result;
+      }
+
+      function renderDeliveryDetail(result) {
+        const container = byId("delivery-detail");
+        if (!result.ok) {
+          container.innerHTML = refusalHtml(result);
+          return;
+        }
+        const delivery = result.data;
+        const fields = [
+          "deliveryId",
+          "endpointId",
+          "eventId",
+          "event",
+          "status",
+          "attempts",
+          "nextAttemptAt",
+          "lastStatusCode",
+          "lastError",
+          "latencyMs",
+          "deliveredAt",
+          "createdAt",
+        ];
+        container.innerHTML = `<table class="kv"><tbody>${fields
+          .map(
+            (field) => `<tr><th>${field}</th>
+              <td data-field="${field}">${escapeHtml(
+                delivery[field] ?? "null",
+              )}</td></tr>`,
+          )
+          .join("")}</tbody></table>
+          <h3>payload — the event before any template</h3>
+          <pre data-field="payload">${escapeHtml(
+            JSON.stringify(delivery.payload, null, 2),
+          )}</pre>
+          <h3>responseSnippet — the receiver's last reply</h3>
+          <pre>${escapeHtml(delivery.responseSnippet ?? "null")}</pre>`;
+      }
+
+      async function openDelivery(deliveryId) {
+        const result = await workspaceCall(
+          "GET",
+          `/webhook-deliveries/${enc(deliveryId)}`,
+        );
+        if (result !== undefined) {
+          renderDeliveryDetail(result);
+        }
+        return result;
+      }
+
+      async function redeliver(deliveryId) {
+        const key = byId("idempotency-key").value.trim();
+        const result = await workspaceCall(
+          "POST",
+          `/webhook-deliveries/${enc(deliveryId)}/redeliver`,
+          {},
+          key === "" ? {} : { "Idempotency-Key": key },
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        byId("delivery-detail").innerHTML = result.ok
+          ? `<p>queued again → ${stateChip(result.data.status)}
+              <span class="muted">open it in about 10 seconds for the outcome</span></p>`
+          : refusalHtml(result);
+        return result;
+      }
+
+      // The deliveryId box, or a refusal in the panel when blank.
+      function selectedDeliveryId() {
+        const deliveryId = byId("delivery-id").value.trim();
+        if (deliveryId === "") {
+          localRefusal("NO DELIVERY", "open a delivery row, or paste an id");
+          return null;
+        }
+        return deliveryId;
+      }
+
+      // --- wiring --------------------------------------------------------
+
+      async function withButton(button, work) {
+        button.disabled = true;
+        try {
+          const result = await work();
+          if (result !== undefined) {
+            showResult(result);
+          }
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      onSubmit("create-form", async (values, form) => {
+        const body = {
+          name: values.name,
+          url: values.url.trim(),
+          method: values.method,
+          // Sent even when empty, so the API's refusal can be seen.
+          events: new FormData(form).getAll("events"),
+        };
+        if (values.bodyTemplate.trim() !== "") {
+          body.bodyTemplate = values.bodyTemplate;
+        }
+        const headers = parseHeaderLines(values.headers);
+        if (headers.length > 0) {
+          body.headers = headers;
+        }
+        const result = await workspaceCall("POST", "/webhook-endpoints", body);
+        if (result === undefined) {
+          return undefined;
+        }
+        if (result.ok) {
+          renderSecret(
+            "create-outcome",
+            `signing secret for ${result.data.endpoint.name}`,
+            result.data.signingSecret,
+          );
+          await loadEndpoints();
+        } else {
+          byId("create-outcome").innerHTML = refusalHtml(result);
+        }
+        return result;
+      });
+
+      onSubmit("edit-form", async (values, form) => {
+        const endpointId = values.endpointId.trim();
+        if (endpointId === "") {
+          localRefusal("NO ENDPOINT", 'press "select" on an endpoint row');
+          return undefined;
+        }
+        const body = {};
+        if (values.name.trim() !== "") {
+          body.name = values.name;
+        }
+        if (values.url.trim() !== "") {
+          body.url = values.url.trim();
+        }
+        if (values.method !== "") {
+          body.method = values.method;
+        }
+        const chosenEvents = new FormData(form).getAll("events");
+        if (chosenEvents.length > 0) {
+          body.events = chosenEvents;
+        }
+        if (values.templateNull === "on") {
+          body.bodyTemplate = null;
+        } else if (values.bodyTemplate.trim() !== "") {
+          body.bodyTemplate = values.bodyTemplate;
+        }
+        const headers = parseHeaderLines(values.headers);
+        if (values.headersClear === "on") {
+          body.headers = [];
+        } else if (headers.length > 0) {
+          body.headers = headers;
+        }
+        if (values.status !== "") {
+          body.status = values.status;
+        }
+        const result = await workspaceCall(
+          "PATCH",
+          `/webhook-endpoints/${enc(endpointId)}`,
+          body,
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        byId("edit-outcome").innerHTML = result.ok
+          ? `<p class="muted">saved — ${escapeHtml(result.data.name)} is ${stateChip(
+              result.data.status,
+            )}</p>`
+          : refusalHtml(result);
+        if (result.ok) {
+          await loadEndpoints();
+        }
+        return result;
+      });
+
+      onSubmit("deliveries-form", () => loadDeliveries());
+
+      onSubmit("delivery-form", async () => {
+        const deliveryId = selectedDeliveryId();
+        return deliveryId === null ? undefined : openDelivery(deliveryId);
+      });
+
+      byId("endpoints-table").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (button === null) {
+          return;
+        }
+        const endpointId = button.closest("tr").dataset.endpointId;
+        withButton(button, () =>
+          ROW_ACTIONS[button.dataset.action](endpointId),
+        );
+      });
+
+      byId("deliveries-table").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (button === null) {
+          return;
+        }
+        const deliveryId = button.closest("tr").dataset.deliveryId;
+        byId("delivery-id").value = deliveryId;
+        withButton(button, () =>
+          button.dataset.action === "open"
+            ? openDelivery(deliveryId)
+            : redeliver(deliveryId),
+        );
+      });
+
+      byId("next-page").addEventListener("click", (event) =>
+        withButton(event.currentTarget, () => loadDeliveries(nextCursor)),
+      );
+
+      byId("redeliver-button").addEventListener("click", (event) => {
+        const deliveryId = selectedDeliveryId();
+        if (deliveryId !== null) {
+          withButton(event.currentTarget, () => redeliver(deliveryId));
+        }
+      });
+
+      byId("new-key").addEventListener("click", () => {
+        byId("idempotency-key").value = `redeliver-${Date.now()}`;
+      });
+
+      byId("refresh-endpoints").addEventListener("click", (event) =>
+        withButton(event.currentTarget, loadEndpoints),
+      );
+      byId("events-button").addEventListener("click", (event) =>
+        withButton(event.currentTarget, loadEvents),
+      );
+      byId("variables-button").addEventListener("click", (event) =>
+        withButton(event.currentTarget, loadVariables),
+      );
+
+      document.addEventListener("click", (event) => {
+        const insert = event.target.closest("[data-insert]");
+        if (insert !== null) {
+          const textarea = document.querySelector(
+            insert.closest("[data-target]").dataset.target,
+          );
+          textarea.setRangeText(
+            insert.dataset.insert,
+            textarea.selectionStart,
+            textarea.selectionEnd,
+            "end",
+          );
+          textarea.focus();
+          return;
+        }
+        const open = event.target.closest("[data-open-delivery]");
+        if (open !== null) {
+          byId("delivery-id").value = open.dataset.openDelivery;
+          withButton(open, () => openDelivery(open.dataset.openDelivery));
+          return;
+        }
+        const copy = event.target.closest("[data-copy]");
+        if (copy !== null) {
+          navigator.clipboard?.writeText(copy.dataset.copy).catch(() => {});
+          copy.textContent = "copied";
+          setTimeout(() => (copy.textContent = "copy"), 1200);
+        }
+      });
+
+      // The catalogue first, so the panel's order on open is fixed.
+      const catalogueLoaded = (async () => {
+        showResult(await loadEvents());
+        showResult(await loadVariables());
+      })();
+
+      // A new workspace: forget the old one's endpoints, log and secrets.
+      onWorkspaceChange(async (workspace) => {
+        await catalogueLoaded;
+        endpoints = [];
+        nextCursor = null;
+        byId("next-page").hidden = true;
+        for (const id of [
+          "rotate-secret",
+          "test-result",
+          "create-outcome",
+          "edit-outcome",
+          "deliveries-table",
+          "delivery-detail",
+        ]) {
+          byId(id).innerHTML = "";
+        }
+        for (const id of [
+          "edit-endpoint-id",
+          "deliveries-endpoint-id",
+          "delivery-id",
+        ]) {
+          byId(id).value = "";
+        }
+        if (workspace === null) {
+          byId("endpoints-table").innerHTML =
+            '<p class="muted">no workspace picked</p>';
+        } else {
+          const result = await loadEndpoints();
+          if (result !== undefined) {
+            showResult(result);
+          }
+        }
+        document.body.dataset.ready = "true";
+      });
+    </script>
+  </body>
+</html>

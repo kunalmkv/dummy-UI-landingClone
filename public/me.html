@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — me</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      h3 {
+        margin: 1rem 0 0.2rem;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table.kv th {
+        width: 11rem;
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      td code {
+        display: block;
+        font: 11px var(--mono);
+        color: var(--muted);
+        word-break: break-all;
+      }
+      /* A wide table scrolls inside its section, never the page. */
+      #organizations,
+      #workspaces,
+      #notifications {
+        overflow-x: auto;
+      }
+      tr.unread td {
+        font-weight: 600;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.7rem;
+      }
+      .bell {
+        font-size: 13px;
+        margin-bottom: 0.6rem;
+      }
+      #workspace-picker {
+        margin-bottom: 0.6rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <p class="note">
+          Account level: nothing here takes a workspace in the path, and every
+          route is <strong>cookie only</strong> — an API token gets 401. The
+          panel shows the call you triggered; the lists refresh quietly after
+          it.
+        </p>
+
+        <section>
+          <h2>Landing — GET /me/bootstrap</h2>
+          <p class="hint">
+            Everything the landing screen needs in one call. Loaded when the
+            page opens. lastWorkspaceId is null until something is picked, or
+            when the pick is no longer reachable.
+          </p>
+          <button type="button" id="load-bootstrap">reload bootstrap</button>
+          <div id="bootstrap-summary">
+            <p class="muted">not loaded</p>
+          </div>
+          <h3>organizations — primary first, then in the order joined</h3>
+          <div id="organizations"><p class="muted">not loaded</p></div>
+        </section>
+
+        <section>
+          <h2>Workspace switcher — GET /me/workspaces</h2>
+          <p class="hint">
+            Every workspace you can open, across every organization, sorted by
+            name. Making one your last workspace (PUT /me/last-workspace) also
+            makes it the current workspace for the other harness pages. ⚠️
+            readOnly ignores a suspended organization — check its status.
+          </p>
+          <button type="button" id="load-workspaces">
+            reload from GET /me/workspaces
+          </button>
+          <div id="workspaces"><p class="muted">not loaded</p></div>
+
+          <h3>remember any id — PUT /me/last-workspace</h3>
+          <form id="remember-form" class="row">
+            <label>
+              workspaceId
+              <input
+                type="text"
+                name="workspaceId"
+                id="remember-id"
+                placeholder="an id you do not reach must be refused 404"
+                required
+              />
+            </label>
+            <button type="submit">remember</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>Finish onboarding — POST /me/onboarding/complete</h2>
+          <p class="hint">
+            Records the app to open first and remembers the workspace as the
+            last pick. Calling it again overwrites both. ⚠️ Any app key is
+            accepted, even one coming soon.
+          </p>
+          <form id="onboarding-form">
+            <label>
+              workspaceId
+              <select name="workspaceId" id="onboarding-workspace"></select>
+            </label>
+            <label>
+              startingApp
+              <select name="startingApp" id="onboarding-app">
+                <option value="affify">affify</option>
+                <option value="journey">journey</option>
+                <option value="reach">reach (coming soon)</option>
+                <option value="insights">insights</option>
+                <option value="vault">vault (coming soon)</option>
+                <option value="connect">connect</option>
+                <option value="spreadsheets">
+                  spreadsheets — not an app, must be refused
+                </option>
+              </select>
+            </label>
+            <button type="submit">finish onboarding</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>Notifications — the bell</h2>
+          <p class="hint">
+            GET /workspaces/:workspaceId/notifications — one bell per workspace:
+            your notices from it plus your account-level ones, newest first,
+            paged by cursor. unreadCount is that bell's unread whatever the
+            filter. ⚠️ status is lowercase.
+          </p>
+          <div id="workspace-picker"></div>
+          <div class="bell">bell: <span id="bell" class="chip">—</span></div>
+          <form id="notifications-form">
+            <div class="row">
+              <label>
+                status
+                <select name="status" id="notifications-status">
+                  <option value="all">all</option>
+                  <option value="unread">unread</option>
+                  <option value="UNREAD">UNREAD — must be refused</option>
+                </select>
+              </label>
+              <label>
+                limit (1–100)
+                <input
+                  type="text"
+                  name="limit"
+                  id="notifications-limit"
+                  value="25"
+                />
+              </label>
+            </div>
+            <label>
+              cursor — blank is the first page; "next page" fills it
+              <input type="text" name="cursor" id="notifications-cursor" />
+            </label>
+            <div class="actions">
+              <button type="submit">load page</button>
+              <button type="button" id="first-page">first page</button>
+              <button type="button" id="next-page" disabled>next page</button>
+            </div>
+          </form>
+          <div id="notifications"><p class="muted">not loaded</p></div>
+          <p id="next-cursor" class="muted"></p>
+
+          <h3>mark read — POST /workspaces/:workspaceId/notifications/read</h3>
+          <p class="hint">
+            "mark ticked read" sends exactly what is ticked, so with nothing
+            ticked it must be refused 400.
+          </p>
+          <div class="actions">
+            <button type="button" id="mark-ticked">mark ticked read</button>
+            <button type="button" id="mark-all">mark all read</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // What the last loads said, so row buttons and quiet refreshes reuse it.
+      const state = {
+        user: null,
+        organizations: [],
+        workspaces: [],
+        lastWorkspaceId: null,
+        notificationQuery: "status=all",
+        nextCursor: null,
+      };
+
+      // An id nobody reaches: picking it in onboarding must answer 404.
+      const UNREACHABLE_ID = "000000000000000000000000";
+
+      function when(value) {
+        return value ? new Date(value).toLocaleString() : "—";
+      }
+
+      function setBell(count) {
+        document.getElementById("bell").textContent = `${count} unread`;
+      }
+
+      function showRefusalIn(containerId, result) {
+        document.getElementById(containerId).innerHTML =
+          `<p class="muted">${escapeHtml(result.error ?? result.statusName)}</p>`;
+      }
+
+      function renderSummary(data) {
+        const user = data.user;
+        const lastWorkspace = data.workspaces.find(
+          (workspace) => workspace.id === data.lastWorkspaceId,
+        );
+        const rows = [
+          ["email", user.email],
+          ["name", `${user.firstName} ${user.lastName ?? ""}`.trim()],
+          ["role · status", `${user.role} · ${user.status}`],
+          ["organizationId", user.organizationId],
+          ["emailVerifiedAt", when(user.emailVerifiedAt)],
+          ["lastLoginAt", when(user.lastLoginAt)],
+          ["onboardingComplete", data.onboardingComplete ? "yes" : "no"],
+          ["startingApp", data.startingApp ?? "null"],
+          [
+            "lastWorkspaceId",
+            lastWorkspace
+              ? `${lastWorkspace.name} (${data.lastWorkspaceId})`
+              : "null",
+          ],
+          ["workspaces", `${data.workspaces.length} — see the switcher`],
+          ["unreadNotifications", data.unreadNotifications],
+        ];
+        document.getElementById("bootstrap-summary").innerHTML = `
+          <table class="kv"><tbody>${rows
+            .map(
+              ([field, value]) =>
+                `<tr><th>${escapeHtml(field)}</th><td data-field="${escapeHtml(
+                  field,
+                )}">${escapeHtml(value)}</td></tr>`,
+            )
+            .join("")}</tbody></table>`;
+      }
+
+      function renderOrganizations() {
+        const container = document.getElementById("organizations");
+        if (state.organizations.length === 0) {
+          container.innerHTML = '<p class="muted">no organization</p>';
+          return;
+        }
+        container.innerHTML = `
+          <table><thead><tr>
+            <th>organization</th><th>you</th><th>plan and usage</th>
+          </tr></thead><tbody>${state.organizations
+            .map(
+              (org) => `
+            <tr data-org="${escapeHtml(org.id)}">
+              <td>${escapeHtml(org.name)}${
+                org.id === state.user?.organizationId
+                  ? ' <span class="chip">primary</span>'
+                  : ""
+              }<code>${escapeHtml(org.slug)} · ${escapeHtml(org.id)}</code></td>
+              <td>${escapeHtml(org.orgRole)}<code>${escapeHtml(
+                org.status,
+              )}</code></td>
+              <td>${escapeHtml(org.plan)}<code>seats ${escapeHtml(
+                org.seatUsage.used,
+              )} / ${escapeHtml(org.seatUsage.limit)} (+${escapeHtml(
+                org.seatUsage.pending,
+              )} pending)</code><code>workspaces ${escapeHtml(
+                org.workspaceUsage.used,
+              )} / ${escapeHtml(org.workspaceUsage.limit)}</code></td>
+            </tr>`,
+            )
+            .join("")}</tbody></table>`;
+      }
+
+      function workspaceWarnings(workspace, org) {
+        const chips = [];
+        if (workspace.readOnly) {
+          chips.push('<span class="chip">read-only</span>');
+        }
+        if (org?.status === "SUSPENDED") {
+          chips.push('<span class="chip">organization suspended → 403</span>');
+        }
+        return chips.join(" ");
+      }
+
+      function describeLastVisit(lastVisit) {
+        if (!lastVisit) {
+          return "never visited";
+        }
+        return `visited by ${lastVisit.name ?? "a deleted account"}, ${when(
+          lastVisit.at,
+        )}`;
+      }
+
+      function renderWorkspaces() {
+        const container = document.getElementById("workspaces");
+        fillOnboardingWorkspaces();
+        if (state.workspaces.length === 0) {
+          container.innerHTML =
+            '<p class="muted">no workspace reachable — create one on <a href="/organization">organizations</a></p>';
+          return;
+        }
+        container.innerHTML = `
+          <table><thead><tr>
+            <th>workspace</th><th>you</th><th>activity</th><th></th>
+          </tr></thead><tbody>${state.workspaces
+            .map((workspace) => {
+              const org = state.organizations.find(
+                (candidate) => candidate.id === workspace.orgId,
+              );
+              const counts = workspace.counts ?? {};
+              return `
+            <tr data-workspace="${escapeHtml(workspace.id)}">
+              <td>${escapeHtml(workspace.name)}${
+                workspace.id === state.lastWorkspaceId
+                  ? ' <span class="chip" data-last>last</span>'
+                  : ""
+              }<code>in ${escapeHtml(org?.name ?? workspace.orgId)}</code><code>${escapeHtml(
+                workspace.slug,
+              )} · ${escapeHtml(workspace.id)}</code></td>
+              <td>${escapeHtml(workspace.role)}<code>${escapeHtml(
+                workspace.status,
+              )}</code>${workspaceWarnings(workspace, org)}</td>
+              <td>${escapeHtml(counts.members)} members · ${escapeHtml(
+                counts.projects,
+              )} projects · ${escapeHtml(
+                counts.pendingInvites,
+              )} invites<code>${escapeHtml(
+                describeLastVisit(workspace.lastVisit),
+              )}</code></td>
+              <td><button type="button" data-remember="${escapeHtml(
+                workspace.id,
+              )}">make this my last workspace</button></td>
+            </tr>`;
+            })
+            .join("")}</tbody></table>`;
+      }
+
+      function fillOnboardingWorkspaces() {
+        const select = document.getElementById("onboarding-workspace");
+        const previous = select.value;
+        select.innerHTML = [
+          ...state.workspaces.map(
+            (workspace) =>
+              `<option value="${escapeHtml(workspace.id)}">${escapeHtml(
+                workspace.name,
+              )} · ${escapeHtml(workspace.role)}</option>`,
+          ),
+          `<option value="${UNREACHABLE_ID}">${UNREACHABLE_ID} — unknown, must be refused</option>`,
+        ].join("");
+        if (previous) {
+          select.value = previous;
+        }
+      }
+
+      async function loadBootstrap(showInPanel = true) {
+        const result = await api.get("/me/bootstrap");
+        if (showInPanel) {
+          showResult(result);
+        }
+        if (!result.ok) {
+          showRefusalIn("bootstrap-summary", result);
+          return result;
+        }
+        state.user = result.data.user;
+        state.organizations = result.data.organizations;
+        state.workspaces = result.data.workspaces;
+        state.lastWorkspaceId = result.data.lastWorkspaceId;
+        renderSummary(result.data);
+        renderOrganizations();
+        renderWorkspaces();
+        return result;
+      }
+
+      async function loadWorkspaces() {
+        const result = await api.get("/me/workspaces");
+        showResult(result);
+        if (!result.ok) {
+          showRefusalIn("workspaces", result);
+          return;
+        }
+        state.workspaces = result.data;
+        renderWorkspaces();
+      }
+
+      async function rememberWorkspace(workspaceId) {
+        const result = await api.put("/me/last-workspace", {
+          workspaceId: workspaceId,
+        });
+        const workspace = state.workspaces.find(
+          (candidate) => candidate.id === workspaceId,
+        );
+        if (result.ok && workspace) {
+          setCurrentWorkspace(workspace);
+        }
+        if (result.ok) {
+          await loadBootstrap(false);
+        }
+        return result;
+      }
+
+      function renderNotifications(items) {
+        const container = document.getElementById("notifications");
+        if (items.length === 0) {
+          container.innerHTML = '<p class="muted">nothing on this page</p>';
+          return;
+        }
+        container.innerHTML = `
+          <table><thead><tr>
+            <th></th><th>notification</th><th>when</th><th></th>
+          </tr></thead><tbody>${items
+            .map(
+              (note) => `
+            <tr data-notification="${escapeHtml(note.id)}"${
+              note.readAt ? "" : ' class="unread"'
+            }>
+              <td><input type="checkbox" data-tick value="${escapeHtml(
+                note.id,
+              )}" /></td>
+              <td>${escapeHtml(note.title)}${
+                note.body ? `<code>${escapeHtml(note.body)}</code>` : ""
+              }<code>${escapeHtml(note.type)} · ${escapeHtml(
+                note.severity,
+              )}</code><code>target ${escapeHtml(
+                note.target.collection ?? "—",
+              )} ${escapeHtml(note.target.id ?? "")}</code><code>id ${escapeHtml(
+                note.id,
+              )}</code></td>
+              <td>${escapeHtml(when(note.createdAt))}${
+                note.readAt
+                  ? `<code>read ${escapeHtml(when(note.readAt))}</code>`
+                  : ' <span class="chip">unread</span>'
+              }</td>
+              <td>${
+                note.readAt
+                  ? ""
+                  : `<button type="button" data-read="${escapeHtml(
+                      note.id,
+                    )}">mark read</button>`
+              }</td>
+            </tr>`,
+            )
+            .join("")}</tbody></table>`;
+      }
+
+      function showNextCursor() {
+        document.getElementById("next-page").disabled =
+          state.nextCursor === null;
+        document.getElementById("next-cursor").textContent =
+          state.nextCursor === null
+            ? "nextCursor: null — this is the last page"
+            : `nextCursor: ${state.nextCursor}`;
+      }
+
+      // Quiet: the caller decides whether the panel shows it.
+      async function loadNotifications(query) {
+        const workspace = currentWorkspace();
+        if (workspace === null) {
+          document.getElementById("notifications").innerHTML =
+            '<p class="muted">pick a workspace — each one has its own bell</p>';
+          return undefined;
+        }
+        const result = await api.get(
+          `/workspaces/${encodeURIComponent(workspace.id)}/notifications?${query}`,
+        );
+        if (!result.ok) {
+          showRefusalIn("notifications", result);
+          return result;
+        }
+        state.notificationQuery = query;
+        state.nextCursor = result.data.nextCursor;
+        setBell(result.data.unreadCount);
+        renderNotifications(result.data.items);
+        showNextCursor();
+        return result;
+      }
+
+      async function markRead(body) {
+        const workspaceId = requireWorkspaceId();
+        if (workspaceId === null) {
+          return;
+        }
+        const result = await api.post(
+          `/workspaces/${encodeURIComponent(workspaceId)}/notifications/read`,
+          body,
+        );
+        if (result.ok) {
+          await loadNotifications(state.notificationQuery);
+          setBell(result.data.unreadCount);
+        }
+        showResult(result);
+      }
+
+      // Every field is sent as typed, so a wrong status reaches the server.
+      function buildNotificationQuery(values) {
+        const params = new URLSearchParams({ status: values.status });
+        if (values.limit) {
+          params.set("limit", values.limit);
+        }
+        if (values.cursor) {
+          params.set("cursor", values.cursor);
+        }
+        return params.toString();
+      }
+
+      function submitNotificationsWithCursor(cursor) {
+        document.getElementById("notifications-cursor").value = cursor;
+        document.getElementById("notifications-form").requestSubmit();
+      }
+
+      document
+        .getElementById("load-bootstrap")
+        .addEventListener("click", () => loadBootstrap());
+      document
+        .getElementById("load-workspaces")
+        .addEventListener("click", loadWorkspaces);
+
+      document
+        .getElementById("workspaces")
+        .addEventListener("click", async (event) => {
+          const button = event.target.closest("[data-remember]");
+          if (button) {
+            showResult(await rememberWorkspace(button.dataset.remember));
+          }
+        });
+
+      onSubmit("remember-form", (values) =>
+        rememberWorkspace(values.workspaceId.trim()),
+      );
+
+      onSubmit("onboarding-form", async (values) => {
+        const result = await api.post("/me/onboarding/complete", {
+          workspaceId: values.workspaceId,
+          startingApp: values.startingApp,
+        });
+        if (result.ok) {
+          await loadBootstrap(false);
+        }
+        return result;
+      });
+
+      onSubmit("notifications-form", (values) =>
+        loadNotifications(buildNotificationQuery(values)),
+      );
+      document
+        .getElementById("first-page")
+        .addEventListener("click", () => submitNotificationsWithCursor(""));
+      document
+        .getElementById("next-page")
+        .addEventListener("click", () =>
+          submitNotificationsWithCursor(state.nextCursor),
+        );
+
+      document
+        .getElementById("notifications")
+        .addEventListener("click", async (event) => {
+          const button = event.target.closest("[data-read]");
+          if (button) {
+            await markRead({ ids: [button.dataset.read] });
+          }
+        });
+      document.getElementById("mark-ticked").addEventListener("click", () =>
+        markRead({
+          ids: [
+            ...document.querySelectorAll("#notifications [data-tick]:checked"),
+          ].map((box) => box.value),
+        }),
+      );
+      document
+        .getElementById("mark-all")
+        .addEventListener("click", () => markRead({ all: true }));
+
+      // The bell follows the picked workspace; the picker fires once on load.
+      onWorkspaceChange(() => loadNotifications(state.notificationQuery));
+
+      // The landing call is the one the panel shows; the bell list loads quietly.
+      (async () => {
+        await loadBootstrap();
+      })();
+    </script>
+  </body>
+</html>

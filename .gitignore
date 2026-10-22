@@ -1,0 +1,7 @@
+node_modules/
+# Screenshots from SHOTS=<dir> e2e runs
+shots/
+screenshots/
+*.png
+.DS_Store
+*.log

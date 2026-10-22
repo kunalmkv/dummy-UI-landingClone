@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — audit log</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main {
+        max-width: 1500px;
+        grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      }
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      #workspace-picker {
+        margin-bottom: 1rem;
+      }
+      a {
+        color: var(--accent);
+      }
+      input[type="number"] {
+        width: 100%;
+        margin-top: 0.2rem;
+        padding: 0.45rem 0.55rem;
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        font: 13px var(--mono);
+      }
+      .gate {
+        border-left: 3px solid var(--dead);
+        background: var(--surface-2);
+        padding: 0.7rem 0.9rem;
+        border-radius: 0 6px 6px 0;
+        margin: 0 0 1rem;
+      }
+      .gate strong {
+        color: var(--dead);
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      td code {
+        display: block;
+        font: 11px var(--mono);
+        color: var(--muted);
+        word-break: break-all;
+      }
+      td.changes div {
+        font: 11.5px var(--mono);
+        word-break: break-word;
+      }
+      td.row-actions button {
+        padding: 0.2rem 0.45rem;
+        font-size: 12px;
+        margin: 0 0.25rem 0.25rem 0;
+        white-space: nowrap;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.7rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <div id="workspace-picker"></div>
+
+        <div id="audit-gate" class="gate" hidden></div>
+
+        <p class="note">
+          Workspace <strong>ADMIN or OWNER</strong> only (an org owner or admin
+          counts as ADMIN; EDITOR and VIEWER get FORBIDDEN), signed in — never
+          an API token. ⚠️ Gated by plan: the free plan answers
+          ENTITLEMENT_REQUIRED even for the owner. Events are recorded all
+          along, so upgrading on <a href="/billing">billing</a> shows the whole
+          history. Organization-level events (org.*) never appear here.
+        </p>
+
+        <section>
+          <h2>Actions — GET /workspaces/:id/audit-actions</h2>
+          <p class="hint">
+            Every action the trail can record, from the server's registry, even
+            ones with no events yet. It fills the action and targetType filters
+            below.
+          </p>
+          <button type="button" id="actions-button">reload actions</button>
+          <span id="actions-count" class="muted"></span>
+          <details id="actions-details">
+            <summary>show the registry</summary>
+            <div id="actions-table" class="table-wrap"></div>
+          </details>
+        </section>
+
+        <section>
+          <h2>Events — GET /workspaces/:id/audit-events</h2>
+          <p class="hint">
+            Newest first; filters combine with AND and blank ones are not sent
+            (a filter sent blank is refused). from and to are inclusive, as
+            anything a JavaScript Date parses — a bare date means midnight UTC,
+            so send a full date-time. limit is clamped to 1–100. "next page"
+            resends the filters of the page it continues.
+          </p>
+          <form id="events-form">
+            <div class="row">
+              <label>
+                action
+                <select name="action" id="action-select">
+                  <option value="">any action</option>
+                </select>
+              </label>
+              <label>
+                targetType
+                <select name="targetType" id="target-type-select">
+                  <option value="">any target</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              actorId — a user id, or an API token id
+              <input type="text" name="actorId" />
+            </label>
+            <div class="row">
+              <label>
+                from
+                <input
+                  type="text"
+                  name="from"
+                  placeholder="2026-09-29T00:00:00Z"
+                />
+              </label>
+              <label>
+                to
+                <input
+                  type="text"
+                  name="to"
+                  placeholder="2026-09-29T23:59:59Z"
+                />
+              </label>
+              <button type="button" id="last-hour">last hour</button>
+            </div>
+            <div class="row">
+              <label>
+                limit
+                <input type="number" name="limit" placeholder="25" />
+              </label>
+              <label>
+                cursor
+                <input type="text" name="cursor" placeholder="nextCursor" />
+              </label>
+            </div>
+            <div class="actions">
+              <button type="submit">search</button>
+              <button type="reset">clear filters</button>
+            </div>
+          </form>
+          <div id="events-table" class="table-wrap">
+            <p class="muted">not loaded</p>
+          </div>
+          <div class="actions">
+            <button type="button" id="next-page" hidden>next page</button>
+            <span id="cursor-note" class="muted"></span>
+          </div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // The trail as last loaded, and the filters its first page was read
+      // with: a cursor remembers only where the page ended.
+      let events = [];
+      let nextCursor = null;
+      let listedFilters = new URLSearchParams();
+
+      const byId = (id) => document.getElementById(id);
+
+      /**
+       * Call a route under the picked workspace.
+       *
+       * @returns {Promise<object|undefined>} undefined when none is picked
+       */
+      async function workspaceCall(method, suffix) {
+        const workspaceId = requireWorkspaceId();
+        if (workspaceId === null) {
+          return undefined;
+        }
+        return api.call(
+          method,
+          `/workspaces/${encodeURIComponent(workspaceId)}${suffix}`,
+        );
+      }
+
+      function refusalText(result) {
+        return `<p class="error-line">${escapeHtml(
+          result.error ?? result.statusName,
+        )}</p>`;
+      }
+
+      /**
+       * Show or hide the plan gate. Any answer but ENTITLEMENT_REQUIRED
+       * clears it, so it always describes the latest call.
+       *
+       * @param {object} result
+       * @returns {void}
+       */
+      function renderGate(result) {
+        const gate = byId("audit-gate");
+        gate.hidden = result.errorCode !== "ENTITLEMENT_REQUIRED";
+        gate.innerHTML = gate.hidden
+          ? ""
+          : `<strong>The audit log is hidden on this plan.</strong>
+            <div class="muted">${escapeHtml(result.error)}</div>
+            <div>Events are still being recorded. The organization's owner can
+            move to starter or above on <a href="/billing">billing</a> to see
+            them all.</div>`;
+      }
+
+      // --- actions -------------------------------------------------------
+
+      function fillSelect(id, blankLabel, options) {
+        const select = byId(id);
+        const kept = select.value;
+        select.innerHTML =
+          `<option value="">${escapeHtml(blankLabel)}</option>` +
+          options
+            .map(
+              ([value, text]) =>
+                `<option value="${escapeHtml(value)}">${escapeHtml(text)}</option>`,
+            )
+            .join("");
+        select.value = options.some(([value]) => value === kept) ? kept : "";
+      }
+
+      function renderActions(actions) {
+        byId("actions-count").textContent = `${actions.length} actions`;
+        fillSelect(
+          "action-select",
+          "any action",
+          actions.map((entry) => [
+            entry.action,
+            `${entry.label} — ${entry.action}`,
+          ]),
+        );
+        const targetTypes = [
+          ...new Set(actions.map((entry) => entry.targetType)),
+        ];
+        fillSelect(
+          "target-type-select",
+          "any target",
+          targetTypes.map((type) => [type, type]),
+        );
+        byId("actions-table").innerHTML = `<table>
+          <thead><tr><th>action</th><th>label</th><th>targetType</th>
+            <th>retention</th><th></th></tr></thead>
+          <tbody>${actions
+            .map(
+              (entry) => `<tr>
+                <td>${escapeHtml(entry.action)}<code>${escapeHtml(
+                  entry.display,
+                )} · ${escapeHtml(entry.family)}</code></td>
+                <td>${escapeHtml(entry.label)}</td>
+                <td>${escapeHtml(entry.targetType)}</td>
+                <td><span class="chip">${escapeHtml(entry.retention)}</span></td>
+                <td class="row-actions"><button type="button" data-filter-action="${escapeHtml(
+                  entry.action,
+                )}">filter</button></td>
+              </tr>`,
+            )
+            .join("")}</tbody>
+        </table>`;
+      }
+
+      /**
+       * Read the registry into the filters; the caller shows the result.
+       *
+       * @returns {Promise<object|undefined>}
+       */
+      async function loadActions() {
+        const result = await workspaceCall("GET", "/audit-actions");
+        if (result === undefined) {
+          return undefined;
+        }
+        renderGate(result);
+        if (result.ok) {
+          renderActions(result.data);
+        } else {
+          byId("actions-count").innerHTML = refusalText(result);
+        }
+        return result;
+      }
+
+      // --- events --------------------------------------------------------
+
+      function formFilters() {
+        const params = new URLSearchParams();
+        for (const [name, value] of new FormData(byId("events-form"))) {
+          if (String(value).trim() !== "") {
+            params.set(name, String(value).trim());
+          }
+        }
+        return params;
+      }
+
+      /**
+       * One page with the form's filters, or the next page of the trail on
+       * screen when given its cursor. The caller shows the result.
+       *
+       * @param {string|null} [cursor]
+       * @returns {Promise<object|undefined>}
+       */
+      async function loadEvents(cursor = null) {
+        const params =
+          cursor === null ? formFilters() : new URLSearchParams(listedFilters);
+        if (cursor !== null) {
+          params.set("cursor", cursor);
+        }
+        const query = params.toString();
+        const result = await workspaceCall(
+          "GET",
+          query === "" ? "/audit-events" : `/audit-events?${query}`,
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        renderGate(result);
+        if (!result.ok) {
+          nextCursor = null;
+          byId("events-table").innerHTML = refusalText(result);
+          hidePaging();
+          return result;
+        }
+        if (cursor === null) {
+          params.delete("cursor");
+          listedFilters = params;
+          events = result.data.items;
+        } else {
+          events = events.concat(result.data.items);
+        }
+        nextCursor = result.data.nextCursor;
+        renderEvents();
+        return result;
+      }
+
+      // from and to hold any JSON, so they are shown as JSON.
+      function changeLines(changes) {
+        if (changes.length === 0) {
+          return '<span class="muted">—</span>';
+        }
+        return changes
+          .map(
+            (change) =>
+              `<div>${escapeHtml(change.field)}: ${escapeHtml(
+                JSON.stringify(change.from),
+              )} → ${escapeHtml(JSON.stringify(change.to))}</div>`,
+          )
+          .join("");
+      }
+
+      function eventRow(event) {
+        const actor = event.actor;
+        const target = event.target;
+        return `<tr data-event-id="${escapeHtml(event.eventId)}">
+          <td>${escapeHtml(new Date(event.at).toLocaleString())}
+            <code>${escapeHtml(event.at)}</code></td>
+          <td><strong data-field="actor">${escapeHtml(actor.label ?? "—")}</strong>
+            <span class="chip">${escapeHtml(actor.type)}</span>
+            ${actor.roleAtTime ? `<span class="chip">${escapeHtml(actor.roleAtTime)}</span>` : ""}
+            <code>${escapeHtml(actor.id ?? "no id")}</code></td>
+          <td><span data-field="action">${escapeHtml(event.action)}</span>
+            <code>${escapeHtml(event.display)}</code></td>
+          <td><span data-field="targetType">${escapeHtml(target.type ?? "—")}</span>
+            ${escapeHtml(target.label ?? "")}
+            <code>${escapeHtml(target.id ?? "no id")}</code></td>
+          <td class="changes" data-field="changes">${changeLines(event.changes)}</td>
+          <td class="muted" title="${escapeHtml(event.userAgent ?? "no user agent")}">${escapeHtml(
+            event.ip ?? "—",
+          )}</td>
+          <td class="row-actions">
+            ${
+              actor.id
+                ? `<button type="button" data-filter="actorId" data-value="${escapeHtml(
+                    actor.id,
+                  )}">same actor</button>`
+                : ""
+            }
+            <button type="button" data-filter="action" data-value="${escapeHtml(
+              event.action,
+            )}">same action</button>
+          </td>
+        </tr>`;
+      }
+
+      // A refused or absent list has no pages to talk about.
+      function hidePaging() {
+        byId("next-page").hidden = true;
+        byId("cursor-note").textContent = "";
+      }
+
+      function renderPaging() {
+        byId("next-page").hidden = nextCursor === null;
+        byId("cursor-note").textContent =
+          nextCursor === null
+            ? `${events.length} shown · last page`
+            : `${events.length} shown · more after this`;
+      }
+
+      function renderEvents() {
+        byId("events-table").innerHTML =
+          events.length === 0
+            ? '<p class="muted">no events match</p>'
+            : `<table>
+                <thead><tr><th>at</th><th>actor</th><th>action</th>
+                  <th>target</th><th>changes</th><th>ip (hover: agent)</th><th></th>
+                </tr></thead>
+                <tbody>${events.map(eventRow).join("")}</tbody>
+              </table>`;
+        renderPaging();
+      }
+
+      /**
+       * Set one filter and search again from the first page.
+       *
+       * @param {string} name a form field
+       * @param {string} value
+       * @returns {Promise<object|undefined>}
+       */
+      function filterBy(name, value) {
+        const form = byId("events-form");
+        form.elements[name].value = value;
+        form.elements.cursor.value = "";
+        return loadEvents();
+      }
+
+      // --- wiring --------------------------------------------------------
+
+      async function withButton(button, work) {
+        button.disabled = true;
+        try {
+          const result = await work();
+          if (result !== undefined) {
+            showResult(result);
+          }
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      byId("actions-button").addEventListener("click", (event) =>
+        withButton(event.currentTarget, loadActions),
+      );
+
+      byId("actions-table").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-filter-action]");
+        if (button !== null) {
+          withButton(button, () =>
+            filterBy("action", button.dataset.filterAction),
+          );
+        }
+      });
+
+      byId("events-table").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-filter]");
+        if (button !== null) {
+          withButton(button, () =>
+            filterBy(button.dataset.filter, button.dataset.value),
+          );
+        }
+      });
+
+      byId("last-hour").addEventListener("click", () => {
+        const form = byId("events-form");
+        const now = Date.now();
+        form.elements.from.value = new Date(now - 3600 * 1000).toISOString();
+        form.elements.to.value = new Date(now).toISOString();
+      });
+
+      onSubmit("events-form", () => loadEvents());
+
+      byId("next-page").addEventListener("click", (event) =>
+        withButton(event.currentTarget, () => loadEvents(nextCursor)),
+      );
+
+      onWorkspaceChange(async (workspace) => {
+        events = [];
+        nextCursor = null;
+        if (workspace === null) {
+          byId("events-table").innerHTML =
+            '<p class="muted">no workspace picked</p>';
+          hidePaging();
+          return;
+        }
+        await loadActions();
+        const result = await loadEvents();
+        if (result !== undefined) {
+          showResult(result);
+        }
+      });
+    </script>
+  </body>
+</html>

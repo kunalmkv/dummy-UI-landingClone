@@ -1,0 +1,320 @@
+/* Plain and legible. Nothing here is trying to be a design — the point is that
+   state and responses are readable at a glance while driving flows by hand. */
+
+:root {
+  --bg: #10161d;
+  --surface: #182029;
+  --surface-2: #1f2933;
+  --line: #2c3846;
+  --text: #dbe3ec;
+  --muted: #8496a8;
+  --ok: #4ade80;
+  --refused: #fbbf24;
+  --dead: #f87171;
+  --accent: #60a5fa;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 0 4rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* The hidden attribute must win over display rules such as .identity's flex,
+   or hidden banners and labels show as empty bars. */
+[hidden] {
+  display: none !important;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* Not sticky: the shared nav wraps to two lines, and a sticky header that
+   tall would cover the top of the sticky response panel. */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 0.75rem 1.25rem;
+}
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.6rem;
+}
+
+nav a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+nav a:hover,
+nav a[aria-current="page"] {
+  text-decoration: underline;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  font-size: 13px;
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+
+.identity.signed-in {
+  border-left: 3px solid var(--ok);
+}
+
+.identity.signed-out {
+  border-left: 3px solid var(--muted);
+}
+
+.chip {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* Which server answered. Mock answers are example data, so they look different. */
+.chip.served-mock {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip.served-live {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+main {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 1.25rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  main {
+    /* Wins over a page's own wider grid, so the panel never gets squeezed. */
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+section h2 {
+  margin: 0 0 0.25rem;
+  font-size: 15px;
+}
+
+section p.hint {
+  margin: 0 0 0.85rem;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.6rem;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="url"],
+select,
+textarea {
+  width: 100%;
+  margin-top: 0.2rem;
+  padding: 0.45rem 0.55rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: 13px var(--mono);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+}
+
+.row > label {
+  flex: 1;
+}
+
+button {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.45rem 0.8rem;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button[type="submit"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.checkbox input {
+  margin: 0;
+}
+
+/* --- the response panel: the actual instrument --- */
+
+.sticky-col {
+  position: sticky;
+  top: 1rem;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--muted);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+}
+
+.panel.ok {
+  border-left-color: var(--ok);
+}
+
+.panel.refused {
+  border-left-color: var(--refused);
+}
+
+.panel.dead {
+  border-left-color: var(--dead);
+}
+
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.badge {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}
+
+.status {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.panel.ok .status {
+  color: var(--ok);
+}
+
+.panel.refused .status {
+  color: var(--refused);
+}
+
+.panel.dead .status {
+  color: var(--dead);
+}
+
+.error-line {
+  margin: 0 0 0.6rem;
+  font-size: 13px;
+  color: var(--refused);
+}
+
+details {
+  margin-top: 0.4rem;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+pre {
+  margin: 0.4rem 0 0;
+  padding: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: 12px/1.45 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+.note {
+  border-left: 3px solid var(--refused);
+  background: var(--surface-2);
+  padding: 0.6rem 0.8rem;
+  border-radius: 0 5px 5px 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 0 0 1rem;
+}

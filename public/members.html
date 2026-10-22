@@ -1,0 +1,853 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — members</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main {
+        max-width: 1400px;
+        grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      }
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      #workspace-picker {
+        margin-bottom: 1rem;
+      }
+      h3 {
+        margin: 1rem 0 0.2rem;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table.kv th {
+        width: 11rem;
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      td code {
+        display: block;
+        font: 11px var(--mono);
+        color: var(--muted);
+        word-break: break-all;
+      }
+      td.row-actions button {
+        padding: 0.2rem 0.45rem;
+        font-size: 12px;
+        margin: 0 0.25rem 0.25rem 0;
+      }
+      tr.suspended td {
+        opacity: 0.6;
+      }
+      .presence-ONLINE {
+        color: var(--ok);
+      }
+      .presence-AWAY {
+        color: var(--refused);
+      }
+      .presence-OFFLINE {
+        color: var(--muted);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.7rem;
+      }
+      .box {
+        margin-top: 0.8rem;
+      }
+      .impact ul {
+        margin: 0.4rem 0 0.8rem;
+        padding-left: 1.2rem;
+      }
+      .impact li {
+        margin-bottom: 0.2rem;
+      }
+      .warn {
+        color: var(--refused);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <div id="workspace-picker"></div>
+
+        <p class="note">
+          Any member may <strong>read</strong> the list, one member, seats and
+          presence. Changing, suspending and removing someone needs
+          <strong>ADMIN or above</strong>. The owner is fixed — only a transfer
+          moves them — and nobody can act on themselves: that is what leave is
+          for. The panel shows the call you triggered; the table redraws from
+          its answer.
+        </p>
+
+        <section>
+          <h2>Members — GET /workspaces/:id/members</h2>
+          <p class="hint">
+            Newest joiner first. Filters combine; blank ones are not sent. q
+            matches the start of an email or name. Presence comes inlined per
+            row — people are "seen" by POST …/visit on the workspace page.
+          </p>
+          <form id="list-form">
+            <div class="row">
+              <label>
+                role
+                <select name="role">
+                  <option value="">any</option>
+                  <option>OWNER</option>
+                  <option>ADMIN</option>
+                  <option>EDITOR</option>
+                  <option>VIEWER</option>
+                </select>
+              </label>
+              <label>
+                status
+                <select name="status">
+                  <option value="">any</option>
+                  <option>ACTIVE</option>
+                  <option>SUSPENDED</option>
+                </select>
+              </label>
+              <label>
+                external
+                <select name="external">
+                  <option value="">any</option>
+                  <option>true</option>
+                  <option>false</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                q — start of email or name
+                <input type="text" name="q" />
+              </label>
+              <label>
+                projectId — who reaches it
+                <input type="text" name="projectId" />
+              </label>
+              <label>
+                limit — 1 to 100
+                <input type="text" name="limit" inputmode="numeric" />
+              </label>
+            </div>
+            <button type="submit">load members</button>
+          </form>
+          <div id="members-table" class="table-wrap">
+            <p class="muted">not loaded</p>
+          </div>
+          <div class="actions">
+            <button type="button" id="next-page" hidden>next page</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>One member</h2>
+          <p class="hint">
+            "select" on a row fills this. Every form below acts on this userId.
+          </p>
+          <form id="get-form">
+            <div class="row">
+              <label>
+                userId
+                <input type="text" name="userId" id="member-id" />
+              </label>
+              <button type="submit">load member</button>
+            </div>
+          </form>
+          <div id="member-detail" class="box"></div>
+
+          <h3>Role — PATCH …/members/:userId</h3>
+          <form id="role-form">
+            <div class="row">
+              <label>
+                wsRole
+                <select name="wsRole">
+                  <option>ADMIN</option>
+                  <option selected>EDITOR</option>
+                  <option>VIEWER</option>
+                  <option>OWNER</option>
+                </select>
+              </label>
+              <button type="submit">set role</button>
+            </div>
+          </form>
+          <p class="hint">
+            OWNER is listed so you can watch it be refused: ownership moves only
+            by transfer. A raise from VIEWER needs a free paid seat.
+          </p>
+
+          <h3>Project access — PATCH …/members/:userId/project-access</h3>
+          <form id="access-form">
+            <div class="row">
+              <label>
+                mode
+                <select name="mode">
+                  <option>ALL</option>
+                  <option>LIMITED</option>
+                </select>
+              </label>
+              <label>
+                projectIds — comma separated, LIMITED only
+                <input type="text" name="projectIds" />
+              </label>
+              <button type="submit">set access</button>
+            </div>
+          </form>
+
+          <h3>Suspend — POST …/suspend · …/reactivate</h3>
+          <p class="hint">
+            Suspended people keep their seat but get 404 for everything here.
+          </p>
+          <div class="actions">
+            <button type="button" id="suspend-button">suspend</button>
+            <button type="button" id="reactivate-button">reactivate</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Remove — GET …/removal-impact, then POST …/remove</h2>
+          <p class="hint">
+            Check the impact first: it says what the removal will do, and who
+            can take over invitations they still have pending here.
+          </p>
+          <button type="button" id="impact-button">check removal impact</button>
+          <div id="impact" class="box impact"></div>
+        </section>
+
+        <section>
+          <h2>Leave — POST …/members/me/leave</h2>
+          <p class="hint">
+            Leaves the picked workspace yourself. The owner is refused while
+            anyone else is still here. reassignToUserId is only needed when you
+            sent invitations here that are still pending.
+          </p>
+          <form id="leave-form">
+            <div class="row">
+              <label>
+                reassignToUserId — optional
+                <input type="text" name="reassignToUserId" />
+              </label>
+              <button type="submit">leave this workspace</button>
+            </div>
+          </form>
+        </section>
+
+        <section>
+          <h2>Seats — GET /workspaces/:id/seats</h2>
+          <p class="hint">
+            Organization-wide numbers, not this workspace's. A VIEWER is free.
+          </p>
+          <button type="button" id="seats-button">load seats</button>
+          <div id="seats" class="box"></div>
+        </section>
+
+        <section>
+          <h2>Presence — GET /workspaces/:id/presence</h2>
+          <p class="hint">
+            Only people seen lately are in the answer — anyone missing is
+            OFFLINE.
+          </p>
+          <button type="button" id="presence-button">load presence</button>
+          <div id="presence" class="box"></div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // The list as last loaded, so an action can redraw one row from its
+      // answer instead of reloading — the panel then keeps the action.
+      let members = [];
+      let nextCursor = null;
+
+      const byId = (id) => document.getElementById(id);
+
+      /**
+       * Call a route under the picked workspace.
+       *
+       * @returns {Promise<object|undefined>} undefined when none is picked
+       */
+      async function workspaceCall(method, suffix, body, headers) {
+        const workspaceId = requireWorkspaceId();
+        if (workspaceId === null) {
+          return undefined;
+        }
+        return api.call(
+          method,
+          `/workspaces/${encodeURIComponent(workspaceId)}${suffix}`,
+          body,
+          headers,
+        );
+      }
+
+      function memberSuffix(userId, rest = "") {
+        return `/members/${encodeURIComponent(userId)}${rest}`;
+      }
+
+      /**
+       * The userId the forms act on, or a refusal in the panel when blank.
+       *
+       * @returns {string|null}
+       */
+      function selectedMemberId() {
+        const userId = byId("member-id").value.trim();
+        if (userId !== "") {
+          return userId;
+        }
+        showResult({
+          ok: false,
+          status: null,
+          statusName: "NO MEMBER",
+          error: 'press "select" on a row first, or paste a userId',
+          request: { method: "—", path: "—", body: null },
+          raw: null,
+          ms: 0,
+        });
+        return null;
+      }
+
+      function when(iso) {
+        return iso ? new Date(iso).toLocaleString() : "never";
+      }
+
+      function access(projectAccess) {
+        return `${projectAccess.mode} ${projectAccess.granted}/${projectAccess.total}`;
+      }
+
+      function refusalText(result) {
+        return `<p class="muted">${escapeHtml(
+          result.error ?? result.statusName,
+        )}</p>`;
+      }
+
+      // --- the list ------------------------------------------------------
+
+      /**
+       * One page of members with the form's filters; appends when given
+       * a cursor. The caller shows the result.
+       *
+       * @param {string|null} [cursor]
+       * @returns {Promise<object|undefined>}
+       */
+      async function loadMembers(cursor = null) {
+        const params = new URLSearchParams();
+        for (const [name, value] of new FormData(byId("list-form"))) {
+          if (String(value).trim() !== "") {
+            params.set(name, String(value).trim());
+          }
+        }
+        if (cursor !== null) {
+          params.set("cursor", cursor);
+        }
+        const query = params.toString();
+        const result = await workspaceCall(
+          "GET",
+          query === "" ? "/members" : `/members?${query}`,
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        if (!result.ok) {
+          byId("members-table").innerHTML = refusalText(result);
+          return result;
+        }
+        members =
+          cursor === null
+            ? result.data.items
+            : members.concat(result.data.items);
+        nextCursor = result.data.nextCursor;
+        renderMembers();
+        return result;
+      }
+
+      function memberRow(member) {
+        const id = escapeHtml(member.userId);
+        const statusAction =
+          member.status === "SUSPENDED" ? "reactivate" : "suspend";
+        return `<tr data-user-id="${id}"${
+          member.status === "SUSPENDED" ? ' class="suspended"' : ""
+        }>
+          <td>
+            <strong>${escapeHtml(member.name || "—")}</strong>
+            <div>${escapeHtml(member.email)}</div>
+            <code>${id}</code>
+          </td>
+          <td>
+            <span class="chip" data-field="role">${escapeHtml(member.wsRole)}</span>
+            <span class="chip" data-field="status">${escapeHtml(member.status)}</span>
+            ${member.isExternal ? '<span class="chip">external</span>' : ""}
+          </td>
+          <td>
+            <span data-field="presence" class="presence-${escapeHtml(
+              member.presence,
+            )}">● ${escapeHtml(member.presence)}</span>
+            <div class="muted">active ${escapeHtml(when(member.lastActiveAt))}</div>
+          </td>
+          <td data-field="access">${escapeHtml(access(member.projectAccess))}</td>
+          <td data-field="seat">${member.seatBillable ? "paid" : "free"}</td>
+          <td class="muted">${escapeHtml(when(member.joinedAt))}</td>
+          <td class="row-actions">
+            <button type="button" data-action="select" data-user-id="${id}">select</button>
+            <button type="button" data-action="${statusAction}" data-user-id="${id}">${statusAction}</button>
+            <button type="button" data-action="impact" data-user-id="${id}">impact</button>
+          </td>
+        </tr>`;
+      }
+
+      function renderMembers() {
+        byId("next-page").hidden = nextCursor === null;
+        byId("members-table").innerHTML =
+          members.length === 0
+            ? '<p class="muted">nobody matches</p>'
+            : `<table>
+                <thead><tr>
+                  <th>member</th><th>role · status</th><th>presence</th>
+                  <th>projects</th><th>seat</th><th>joined</th><th></th>
+                </tr></thead>
+                <tbody>${members.map(memberRow).join("")}</tbody>
+              </table>`;
+      }
+
+      /**
+       * Redraw a member from a change's answer ({ member }).
+       *
+       * @param {object} result
+       * @returns {void}
+       */
+      function applyChangedMember(result) {
+        const changed = result.data?.member;
+        if (!result.ok || !changed) {
+          return;
+        }
+        members = members.map((member) =>
+          member.userId === changed.userId ? changed : member,
+        );
+        renderMembers();
+      }
+
+      // --- one member ----------------------------------------------------
+
+      function renderMemberDetail(result) {
+        const box = byId("member-detail");
+        if (!result.ok) {
+          box.innerHTML = refusalText(result);
+          return;
+        }
+        const { member, reachableProjects } = result.data;
+        const rows = [
+          ["name", member.name || "—"],
+          ["email", member.email],
+          ["wsRole", member.wsRole],
+          ["status", member.status],
+          ["presence", member.presence],
+          ["projectAccess", access(member.projectAccess)],
+          [
+            "reachableProjects",
+            Array.isArray(reachableProjects)
+              ? reachableProjects.join(", ")
+              : reachableProjects,
+          ],
+          ["seatBillable", String(member.seatBillable)],
+          ["joinedAt", when(member.joinedAt)],
+          ["lastActiveAt", when(member.lastActiveAt)],
+        ];
+        box.innerHTML = `<table class="kv">${rows
+          .map(
+            ([name, value]) =>
+              `<tr><th>${name}</th><td data-field="${name}">${escapeHtml(
+                value,
+              )}</td></tr>`,
+          )
+          .join("")}</table>`;
+      }
+
+      async function selectMember(userId) {
+        byId("member-id").value = userId;
+        const result = await workspaceCall("GET", memberSuffix(userId));
+        if (result === undefined) {
+          return undefined;
+        }
+        renderMemberDetail(result);
+        return result;
+      }
+
+      async function setStatus(userId, verb) {
+        const result = await workspaceCall(
+          "POST",
+          memberSuffix(userId, `/${verb}`),
+          {},
+        );
+        if (result !== undefined) {
+          applyChangedMember(result);
+        }
+        return result;
+      }
+
+      // --- removal -------------------------------------------------------
+
+      function impactLines(impact) {
+        const count = (name) => escapeHtml(impact[name]);
+        return [
+          `take away the ${count("projects")} project(s) they reach here`,
+          `stop ${count("apiTokens")} API token(s) of theirs reaching this workspace`,
+          impact.pendingInvitesOwned > 0
+            ? `<span class="warn">hand over ${count("pendingInvitesOwned")} pending invitation(s) they sent — pick who takes them below, or the removal is refused (REASSIGN_REQUIRED)</span>`
+            : "hand over no pending invitations",
+          impact.seatsFreedInOrg > 0
+            ? `free their paid seat — the organization then has ${count("seatsFreeAfter")} free`
+            : `keep their seat (something else in the organization holds it, or it was free) — ${count("seatsFreeAfter")} free`,
+          `drafts they own: ${count("draftsOwned")}`,
+          impact.isLastOwner
+            ? '<span class="warn">they are the owner — the removal will be refused (LAST_OWNER)</span>'
+            : null,
+        ].filter((line) => line !== null);
+      }
+
+      async function checkImpact(userId) {
+        byId("member-id").value = userId;
+        const result = await workspaceCall(
+          "GET",
+          memberSuffix(userId, "/removal-impact"),
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        const box = byId("impact");
+        if (!result.ok) {
+          box.innerHTML = refusalText(result);
+          return result;
+        }
+        const impact = result.data;
+        const who =
+          members.find((member) => member.userId === userId)?.email ?? userId;
+        // Numbers and fixed text only, apart from who and the candidates.
+        box.innerHTML = `
+          <p>Removing <strong>${escapeHtml(who)}</strong> from this workspace would:</p>
+          <ul id="impact-lines">${impactLines(impact)
+            .map((line) => `<li>${line}</li>`)
+            .join("")}</ul>
+          <label>
+            reassignToUserId — who takes over their pending invitations
+            <select id="reassign-to">
+              <option value="">nobody</option>
+              ${impact.reassignCandidates
+                .map(
+                  (candidate) =>
+                    `<option value="${escapeHtml(candidate.userId)}">${escapeHtml(
+                      candidate.email,
+                    )} · ${escapeHtml(candidate.name || "—")}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <div class="row">
+            <label>
+              Idempotency-Key — the same key replays the first answer
+              <input type="text" id="idempotency-key" value="${escapeHtml(
+                crypto.randomUUID(),
+              )}" />
+            </label>
+            <button type="button" id="new-key">new key</button>
+          </div>
+          <button type="button" id="remove-button" data-user-id="${escapeHtml(
+            userId,
+          )}">remove ${escapeHtml(who)}</button>`;
+        byId("new-key").addEventListener("click", () => {
+          byId("idempotency-key").value = crypto.randomUUID();
+        });
+        const removeButton = byId("remove-button");
+        removeButton.addEventListener("click", () =>
+          withButton(removeButton, () =>
+            removeMember(removeButton.dataset.userId),
+          ),
+        );
+        return result;
+      }
+
+      async function removeMember(userId) {
+        const reassignToUserId = byId("reassign-to").value;
+        const key = byId("idempotency-key").value.trim();
+        const result = await workspaceCall(
+          "POST",
+          memberSuffix(userId, "/remove"),
+          reassignToUserId === "" ? {} : { reassignToUserId: reassignToUserId },
+          key === "" ? {} : { "Idempotency-Key": key },
+        );
+        if (result?.ok) {
+          members = members.filter((member) => member.userId !== userId);
+          renderMembers();
+        }
+        return result;
+      }
+
+      // --- seats and presence --------------------------------------------
+
+      function renderSeats(result) {
+        const box = byId("seats");
+        if (!result.ok) {
+          box.innerHTML = refusalText(result);
+          return;
+        }
+        const seats = result.data;
+        const numbers = [
+          "plan",
+          "seatsIncluded",
+          "seatsExtra",
+          "seatsUsed",
+          "seatsFree",
+          "seatsPending",
+        ];
+        box.innerHTML = `<table class="kv">
+          ${numbers
+            .map(
+              (name) =>
+                `<tr><th>${name}</th><td data-field="${name}">${escapeHtml(
+                  seats[name],
+                )}</td></tr>`,
+            )
+            .join("")}
+          <tr><th>byRole</th><td>${seats.byRole
+            .map(
+              (segment) =>
+                `<span class="chip">${escapeHtml(segment.role)} ${escapeHtml(
+                  segment.count,
+                )}</span>`,
+            )
+            .join(" ")}</td></tr>
+          <tr><th>billableRoles</th><td>${escapeHtml(
+            seats.billableRoles.join(", "),
+          )}</td></tr>
+        </table>`;
+      }
+
+      function renderPresence(result) {
+        const box = byId("presence");
+        if (!result.ok) {
+          box.innerHTML = refusalText(result);
+          return;
+        }
+        const dots = Object.entries(result.data);
+        if (dots.length === 0) {
+          box.innerHTML =
+            '<p class="muted">nobody seen lately — everyone is OFFLINE</p>';
+          return;
+        }
+        box.innerHTML = `<table>
+          <thead><tr><th>member</th><th>presence</th></tr></thead>
+          <tbody>${dots
+            .map(([userId, state]) => {
+              const known = members.find((member) => member.userId === userId);
+              return `<tr data-user-id="${escapeHtml(userId)}">
+                <td>${escapeHtml(known?.email ?? "not in the loaded list")}<code>${escapeHtml(
+                  userId,
+                )}</code></td>
+                <td class="presence-${escapeHtml(state)}">● ${escapeHtml(state)}</td>
+              </tr>`;
+            })
+            .join("")}</tbody>
+        </table>`;
+      }
+
+      // --- wiring --------------------------------------------------------
+
+      /**
+       * Disable a button while its call runs, then show what came back.
+       *
+       * @param {HTMLButtonElement} button
+       * @param {Function} work returns a result, or undefined
+       * @returns {Promise<void>}
+       */
+      async function withButton(button, work) {
+        button.disabled = true;
+        try {
+          const result = await work();
+          if (result !== undefined) {
+            showResult(result);
+          }
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      const ROW_ACTIONS = {
+        select: selectMember,
+        suspend: (userId) => setStatus(userId, "suspend"),
+        reactivate: (userId) => setStatus(userId, "reactivate"),
+        impact: checkImpact,
+      };
+
+      byId("members-table").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (button !== null) {
+          withButton(button, () =>
+            ROW_ACTIONS[button.dataset.action](button.dataset.userId),
+          );
+        }
+      });
+
+      onSubmit("list-form", () => loadMembers());
+
+      byId("next-page").addEventListener("click", (event) =>
+        withButton(event.currentTarget, () => loadMembers(nextCursor)),
+      );
+
+      onSubmit("get-form", () => {
+        const userId = selectedMemberId();
+        return userId === null ? undefined : selectMember(userId);
+      });
+
+      onSubmit("role-form", async (values) => {
+        const userId = selectedMemberId();
+        if (userId === null) {
+          return undefined;
+        }
+        const result = await workspaceCall("PATCH", memberSuffix(userId), {
+          wsRole: values.wsRole,
+        });
+        if (result !== undefined) {
+          applyChangedMember(result);
+        }
+        return result;
+      });
+
+      onSubmit("access-form", async (values) => {
+        const userId = selectedMemberId();
+        if (userId === null) {
+          return undefined;
+        }
+        const body = { mode: values.mode };
+        if (values.mode === "LIMITED") {
+          body.projectIds = values.projectIds
+            .split(",")
+            .map((id) => id.trim())
+            .filter((id) => id !== "");
+        }
+        const result = await workspaceCall(
+          "PATCH",
+          memberSuffix(userId, "/project-access"),
+          body,
+        );
+        if (result !== undefined) {
+          applyChangedMember(result);
+        }
+        return result;
+      });
+
+      for (const verb of ["suspend", "reactivate"]) {
+        byId(`${verb}-button`).addEventListener("click", (event) => {
+          const userId = selectedMemberId();
+          if (userId !== null) {
+            withButton(event.currentTarget, () => setStatus(userId, verb));
+          }
+        });
+      }
+
+      byId("impact-button").addEventListener("click", (event) => {
+        const userId = selectedMemberId();
+        if (userId !== null) {
+          withButton(event.currentTarget, () => checkImpact(userId));
+        }
+      });
+
+      onSubmit("leave-form", async (values) => {
+        const reassignToUserId = values.reassignToUserId.trim();
+        const result = await workspaceCall(
+          "POST",
+          "/members/me/leave",
+          reassignToUserId === "" ? {} : { reassignToUserId: reassignToUserId },
+        );
+        if (result?.ok) {
+          // The picker still names it until reloaded, so any call now shows
+          // the 404 of someone who is no longer inside.
+          members = [];
+          nextCursor = null;
+          byId("next-page").hidden = true;
+          byId("members-table").innerHTML =
+            '<p class="muted">you left this workspace — press "reload list" in the picker</p>';
+        }
+        return result;
+      });
+
+      byId("seats-button").addEventListener("click", (event) =>
+        withButton(event.currentTarget, async () => {
+          const result = await workspaceCall("GET", "/seats");
+          if (result !== undefined) {
+            renderSeats(result);
+          }
+          return result;
+        }),
+      );
+
+      byId("presence-button").addEventListener("click", (event) =>
+        withButton(event.currentTarget, async () => {
+          const result = await workspaceCall("GET", "/presence");
+          if (result !== undefined) {
+            renderPresence(result);
+          }
+          return result;
+        }),
+      );
+
+      // A new workspace: forget the old one's state and load its members.
+      onWorkspaceChange(async (workspace) => {
+        members = [];
+        nextCursor = null;
+        byId("next-page").hidden = true;
+        for (const id of ["member-detail", "impact", "seats", "presence"]) {
+          byId(id).innerHTML = "";
+        }
+        byId("member-id").value = "";
+        if (workspace === null) {
+          byId("members-table").innerHTML =
+            '<p class="muted">no workspace picked</p>';
+          return;
+        }
+        const result = await loadMembers();
+        if (result !== undefined) {
+          showResult(result);
+        }
+      });
+    </script>
+  </body>
+</html>

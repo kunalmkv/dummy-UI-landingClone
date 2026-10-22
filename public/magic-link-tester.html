@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra auth harness — magic link</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      /* app.css gives .identity and label a display, which beats [hidden]. */
+      [hidden] {
+        display: none !important;
+      }
+      a {
+        color: var(--accent);
+      }
+      .outcome {
+        margin: 0.6rem 0 0;
+        font-size: 12.5px;
+      }
+      .outcome:empty {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+      <div
+        id="challenge-banner"
+        class="identity"
+        style="margin-top: 0.5rem; border-left: 3px solid #fbbf24"
+        hidden
+      ></div>
+    </header>
+
+    <main>
+      <div>
+        <section>
+          <h2>Sign in with a magic link</h2>
+          <p class="hint">
+            <code>POST /auth/magic-link/consume</code> — single use, 15 minutes.
+            It signs you in, unless two-factor is on: then it stops at the
+            challenge, because a link proves only the mailbox. Ask for a link on
+            the <a href="/account">account page</a>.
+          </p>
+          <p class="note" id="token-note" hidden>
+            Token read from the link — press sign in to spend it.
+          </p>
+          <form id="consume-form">
+            <label>
+              token
+              <textarea name="token" id="token" rows="3" required></textarea>
+            </label>
+            <button type="submit">sign in</button>
+          </form>
+          <p class="outcome" id="consume-outcome"></p>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      const token = new URLSearchParams(location.search).get("token") ?? "";
+      document.getElementById("token").value = token;
+      document.getElementById("token-note").hidden = token === "";
+
+      /**
+       * One readable line for what the consume did.
+       *
+       * @param {object} result
+       * @returns {string} HTML
+       */
+      function describeConsume(result) {
+        if (!result.ok) {
+          return escapeHtml(result.error ?? result.statusName);
+        }
+        if (result.data?.mfaRequired === true) {
+          return "second factor required — not signed in yet";
+        }
+        return `signed in as ${escapeHtml(
+          result.data?.user?.email,
+        )} — <a href="/account">account →</a>`;
+      }
+
+      onSubmit("consume-form", async (values) => {
+        const result = await api.post("/auth/magic-link/consume", {
+          token: values.token.trim(),
+        });
+        document.getElementById("consume-outcome").innerHTML =
+          describeConsume(result);
+        noteIfChallenged(result);
+        return result;
+      });
+    </script>
+  </body>
+</html>

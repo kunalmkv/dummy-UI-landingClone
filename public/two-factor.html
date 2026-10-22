@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra auth harness — two-factor</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      .outcome {
+        margin: 0.6rem 0 0;
+        font-size: 12.5px;
+      }
+      .outcome:empty {
+        display: none;
+      }
+      .qr {
+        background: #fff;
+        padding: 8px;
+        border-radius: 6px;
+        width: 200px;
+        height: 200px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      td {
+        padding: 0.3rem 0.5rem;
+        border-bottom: 1px solid var(--line);
+      }
+      td.actions {
+        text-align: right;
+      }
+      td.actions button {
+        padding: 0.2rem 0.5rem;
+        font-size: 12px;
+      }
+      .backup-code {
+        font-size: 14px;
+        letter-spacing: 0.06em;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <p class="note">
+          Codes come from an authenticator app scanning the QR below. Every
+          six-digit code works once: after using one, wait for the app to show
+          the next before sending another.
+        </p>
+
+        <section>
+          <h2>Finish a sign-in</h2>
+          <p class="hint">
+            <code>POST /auth/mfa/verify</code> — when a sign-in (password, magic
+            link or Google) answers <code>mfaRequired</code>, you are
+            <strong>not signed in yet</strong>: only a challenge cookie is set.
+            A code from the app or one backup code finishes it. Five wrong codes
+            destroy the challenge.
+          </p>
+          <form id="challenge-form">
+            <div class="row">
+              <label>
+                code — 6 digits, or a backup code
+                <input type="text" name="code" autocomplete="off" required />
+              </label>
+              <button type="submit">verify</button>
+            </div>
+          </form>
+          <div class="row" style="margin-top: 0.6rem">
+            <button type="button" id="abandon-btn">not you? abandon</button>
+            <span class="hint">
+              <code>POST /auth/mfa/abandon</code> — throws the challenge away.
+            </span>
+          </div>
+          <p class="outcome" id="challenge-outcome"></p>
+        </section>
+
+        <section>
+          <h2>Turn two-factor on</h2>
+          <p class="hint">
+            <code>POST /auth/mfa/setup</code> then
+            <code>POST /auth/mfa/enable</code>. Setup alone turns nothing on —
+            only a real code from the app does, so a bad scan cannot lock you
+            out. Setup again before enabling to start over.
+          </p>
+          <button type="button" id="setup-btn">1 · setup (get QR)</button>
+          <div id="qr-area" style="margin-top: 0.8rem"></div>
+          <form id="enable-form" style="margin-top: 0.8rem">
+            <div class="row">
+              <label>
+                2 · code from the app
+                <input type="text" name="code" autocomplete="off" required />
+              </label>
+              <button type="submit">enable</button>
+            </div>
+          </form>
+          <p class="outcome" id="enable-outcome"></p>
+        </section>
+
+        <section>
+          <h2>Backup codes</h2>
+          <p class="hint">
+            <code>POST /auth/mfa/regenerate-backup-codes</code> — needs the
+            password. The old set dies at once. Codes are shown
+            <strong>once</strong> (here and after enabling) and cannot be read
+            back.
+          </p>
+          <form id="regenerate-form">
+            <div class="row">
+              <label>
+                current password
+                <input
+                  type="text"
+                  name="currentPassword"
+                  value="correct horse battery"
+                  required
+                />
+              </label>
+              <button type="submit">regenerate</button>
+            </div>
+          </form>
+          <div id="backup-area" style="margin-top: 0.8rem"></div>
+        </section>
+
+        <section>
+          <h2>Turn two-factor off</h2>
+          <p class="hint">
+            <code>POST /auth/mfa/disable</code> — needs the password
+            <strong>and</strong> a working code, so a stolen session alone
+            cannot remove the second factor. ⚠️ The API takes an authenticator
+            code here; a backup code is refused.
+          </p>
+          <form id="disable-form">
+            <label>
+              current password
+              <input
+                type="text"
+                name="currentPassword"
+                value="correct horse battery"
+                required
+              />
+            </label>
+            <div class="row">
+              <label>
+                code from the app
+                <input type="text" name="code" autocomplete="off" required />
+              </label>
+              <button type="submit">disable</button>
+            </div>
+          </form>
+          <p class="outcome" id="disable-outcome"></p>
+        </section>
+
+        <section>
+          <h2>Confirm identity</h2>
+          <p class="hint">
+            <code>POST /auth/identity/confirm</code> — proves it is still you before one
+            high-impact action. Send the password, or a code if two-factor is
+            on. The grant is tied to this session and the one action, lasts 5
+            minutes and is spent by that action. Every check, right or wrong,
+            counts toward 10 per 15 minutes.
+          </p>
+          <form id="identity-confirm-form">
+            <label>
+              action
+              <select name="action">
+                <option value="ORG_OWNERSHIP_TRANSFER">
+                  ORG_OWNERSHIP_TRANSFER — handing the organization over
+                </option>
+                <option value="WORKSPACE_OWNERSHIP_TRANSFER">
+                  WORKSPACE_OWNERSHIP_TRANSFER — offering a workspace
+                </option>
+                <option value="WORKSPACE_ARCHIVE" selected>
+                  WORKSPACE_ARCHIVE — archiving a workspace
+                </option>
+              </select>
+            </label>
+            <div class="row">
+              <label>
+                password
+                <input type="text" name="password" autocomplete="off" />
+              </label>
+              <label>
+                or code
+                <input type="text" name="code" autocomplete="off" />
+              </label>
+              <button type="submit">step up</button>
+            </div>
+          </form>
+          <p class="outcome" id="identity-confirm-outcome"></p>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // Where each identity-confirm grant is spent.
+      const CONFIRM_PAGES = {
+        ORG_OWNERSHIP_TRANSFER: "/organization",
+        WORKSPACE_OWNERSHIP_TRANSFER: "/ownership",
+        WORKSPACE_ARCHIVE: "/workspace",
+      };
+
+      function setOutcome(id, html) {
+        document.getElementById(id).innerHTML = html;
+      }
+
+      function refusalHtml(result) {
+        return `<span class="error-line">${escapeHtml(
+          result.error ?? result.statusName,
+        )}</span>`;
+      }
+
+      // One row per code, never one block: pasting the whole set into the
+      // challenge sends one string the server rightly refuses.
+      function backupCodesHtml(codes, heading) {
+        const rows = codes
+          .map(
+            (code, index) => `<tr>
+              <td class="muted">${index + 1}</td>
+              <td><code class="backup-code">${escapeHtml(code)}</code></td>
+              <td class="actions"><button type="button"
+                data-copy="${escapeHtml(code)}">copy</button></td>
+            </tr>`,
+          )
+          .join("");
+        return `<div class="panel ok">
+            <div class="panel-head"><strong>${escapeHtml(heading)}</strong>
+              <span class="muted">each works once — copy one at a time</span>
+            </div>
+            <table><tbody>${rows}</tbody></table>
+          </div>`;
+      }
+
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-copy]");
+        if (button === null) {
+          return;
+        }
+        navigator.clipboard?.writeText(button.dataset.copy).catch(() => {});
+        button.textContent = "copied";
+        setTimeout(() => (button.textContent = "copy"), 1200);
+      });
+
+      onSubmit("challenge-form", async (values) => {
+        const result = await api.post("/auth/mfa/verify", {
+          code: values.code.trim(),
+        });
+        setOutcome(
+          "challenge-outcome",
+          result.ok
+            ? `signed in as <strong>${escapeHtml(
+                result.data?.user?.email,
+              )}</strong>`
+            : refusalHtml(result),
+        );
+        return result;
+      });
+
+      document
+        .getElementById("abandon-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/auth/mfa/abandon");
+          setOutcome(
+            "challenge-outcome",
+            result.ok
+              ? "challenge thrown away — sign in again to get a new one"
+              : refusalHtml(result),
+          );
+          showResult(result);
+          await refreshIdentity();
+        });
+
+      document
+        .getElementById("setup-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/auth/mfa/setup");
+          const qrCode = String(result.data?.qrCode ?? "");
+          // Only a data URI is shown: the QR carries the secret.
+          document.getElementById("qr-area").innerHTML =
+            result.ok && qrCode.startsWith("data:image/")
+              ? `<img class="qr" src="${escapeHtml(qrCode)}"
+                   alt="scan this with an authenticator app" />
+                 <p class="hint" style="margin:0.6rem 0 0">
+                   can't scan? manual key:
+                   <code id="manual-key">${escapeHtml(
+                     result.data.manualEntryKey,
+                   )}</code>
+                 </p>`
+              : `<p class="outcome">${refusalHtml(result)}</p>`;
+          showResult(result);
+        });
+
+      onSubmit("enable-form", async (values) => {
+        const result = await api.post("/auth/mfa/enable", {
+          code: values.code.trim(),
+        });
+        setOutcome(
+          "enable-outcome",
+          result.ok ? "two-factor is on" : refusalHtml(result),
+        );
+        if (result.ok) {
+          document.getElementById("backup-area").innerHTML = backupCodesHtml(
+            result.data.backupCodes,
+            "backup codes — shown once",
+          );
+        }
+        return result;
+      });
+
+      onSubmit("regenerate-form", async (values) => {
+        const result = await api.post("/auth/mfa/regenerate-backup-codes", {
+          currentPassword: values.currentPassword,
+        });
+        document.getElementById("backup-area").innerHTML = result.ok
+          ? backupCodesHtml(
+              result.data.backupCodes,
+              "new backup codes — the old set is dead",
+            )
+          : `<p class="outcome">${refusalHtml(result)}</p>`;
+        return result;
+      });
+
+      onSubmit("disable-form", async (values) => {
+        const result = await api.post("/auth/mfa/disable", {
+          currentPassword: values.currentPassword,
+          code: values.code.trim(),
+        });
+        setOutcome(
+          "disable-outcome",
+          result.ok ? "two-factor is off" : refusalHtml(result),
+        );
+        return result;
+      });
+
+      onSubmit("identity-confirm-form", async (values) => {
+        // Only what was typed is sent; the API checks the password first.
+        const body = { action: values.action };
+        if (values.password !== "") {
+          body.password = values.password;
+        }
+        if (values.code.trim() !== "") {
+          body.code = values.code.trim();
+        }
+        const result = await api.post("/auth/identity/confirm", body);
+        setOutcome(
+          "identity-confirm-outcome",
+          result.ok
+            ? `granted <span class="chip">${escapeHtml(
+                result.data.action,
+              )}</span> for ${escapeHtml(
+                result.data.expiresInSeconds,
+              )}s — now do it on <a href="${
+                CONFIRM_PAGES[result.data.action] ?? "/"
+              }">its page</a>`
+            : refusalHtml(result),
+        );
+        return result;
+      });
+
+      document.body.dataset.ready = "true";
+    </script>
+  </body>
+</html>

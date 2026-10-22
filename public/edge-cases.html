@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra auth harness — edge cases</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      .outcome {
+        margin: 0.6rem 0 0;
+        font-size: 12.5px;
+      }
+      .outcome:empty {
+        display: none;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        margin-top: 0.8rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.35rem 0.5rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+        font-size: 12px;
+      }
+      td {
+        font-family: var(--mono);
+      }
+      /* .identity sets display, which would otherwise beat [hidden]. */
+      #challenge-banner[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+      <div
+        id="challenge-banner"
+        class="identity"
+        style="margin-top: 0.5rem; border-left: 3px solid var(--refused)"
+        hidden
+      ></div>
+    </header>
+
+    <main>
+      <div>
+        <section>
+          <h2>Address under test</h2>
+          <p class="hint">
+            A real, verified account. The lockout lasts 15 minutes and doubles
+            each time, so use a fresh account per run. Every check below uses
+            this address unless it says otherwise.
+          </p>
+          <label>
+            email
+            <input type="text" id="target-email" autocomplete="off" />
+          </label>
+        </section>
+
+        <section>
+          <h2>1 · Lockout</h2>
+          <p class="hint">
+            <code>POST /auth/session/login</code> with wrong passwords until the
+            API locks the address (five in 15 minutes). Each wrong answer
+            carries <code>attemptsRemaining</code>; the lock carries
+            <code>retryAfterSeconds</code> — seconds, never a timestamp.
+          </p>
+          <form id="lockout-form">
+            <button type="submit">fire wrong passwords until locked</button>
+          </form>
+          <div id="lockout-trace"></div>
+          <p class="outcome" id="lockout-countdown"></p>
+
+          <form id="right-password-form" style="margin-top: 0.9rem">
+            <div class="row">
+              <label>
+                the RIGHT password — refused while locked
+                <input
+                  type="text"
+                  name="password"
+                  value="correct horse battery"
+                  required
+                />
+              </label>
+              <button type="submit">sign in</button>
+            </div>
+          </form>
+          <p class="outcome" id="right-password-outcome"></p>
+        </section>
+
+        <section>
+          <h2>2 · Magic link while locked out</h2>
+          <p class="hint">
+            <code>POST /auth/magic-link/request</code> is not gated by the
+            lockout, so someone locked out of the password route still has a way
+            in. Opening the link (<code>POST /auth/magic-link/consume</code>)
+            signs in and clears the lockout — try the right password again
+            after.
+          </p>
+          <div class="row">
+            <button type="button" id="hatch-btn">request a magic link</button>
+            <button type="button" id="open-magic-btn">
+              open the newest magic link from the outbox
+            </button>
+          </div>
+          <p class="outcome" id="hatch-outcome"></p>
+        </section>
+
+        <section>
+          <h2>3 · Cooldowns</h2>
+          <p class="hint">
+            Send twice within a minute: the second is accepted but sends
+            nothing. Magic link and verification resend return
+            <code>resendAfterSeconds</code> to count down; forgot-password's
+            cooldown is silent.
+          </p>
+          <form id="cooldown-form">
+            <div class="row">
+              <label>
+                endpoint
+                <select name="endpoint">
+                  <option value="/auth/magic-link/request">
+                    POST /auth/magic-link/request
+                  </option>
+                  <option value="/auth/email/resend-verification">
+                    POST /auth/email/resend-verification
+                  </option>
+                  <option value="/auth/password/forgot">
+                    POST /auth/password/forgot
+                  </option>
+                </select>
+              </label>
+              <button type="submit">send</button>
+            </div>
+          </form>
+          <p class="outcome" id="cooldown-outcome"></p>
+        </section>
+
+        <section>
+          <h2>4 · A code with no challenge</h2>
+          <p class="hint">
+            <code>POST /auth/mfa/verify</code> with 123456 and no sign-in
+            waiting. Must be 401: the challenge cookie says which sign-in is
+            waiting, so a code alone proves nothing. ⚠️ If a challenge is live
+            in this browser this spends one of its attempts — abandon it on
+            <a href="/two-factor">two-factor</a> first.
+          </p>
+          <button type="button" id="orphan-code-btn">
+            verify 123456 with no challenge
+          </button>
+          <p class="outcome" id="orphan-outcome"></p>
+        </section>
+
+        <section>
+          <h2>5 · Anti-enumeration, side by side</h2>
+          <p class="hint">
+            The same request for the address under test and for one with no
+            account, then the two responses compared.
+            <code>resendAfterSeconds</code> is a countdown, so it is masked; any
+            other difference tells a stranger the account exists. ⚠️ The login
+            option spends one of the address's five attempts.
+          </p>
+          <form id="enum-form">
+            <div class="row">
+              <label>
+                address with NO account
+                <input type="text" name="fake" id="fake-email" required />
+              </label>
+              <button
+                type="button"
+                data-fresh-email="#fake-email"
+                data-label="nobody"
+              >
+                fresh
+              </button>
+            </div>
+            <div class="row">
+              <label>
+                endpoint
+                <select name="endpoint">
+                  <option value="/auth/password/forgot">
+                    POST /auth/password/forgot
+                  </option>
+                  <option value="/auth/magic-link/request">
+                    POST /auth/magic-link/request
+                  </option>
+                  <option value="/auth/email/resend-verification">
+                    POST /auth/email/resend-verification
+                  </option>
+                  <option value="/auth/session/login">
+                    POST /auth/session/login — a wrong password
+                  </option>
+                </select>
+              </label>
+              <button type="submit">compare</button>
+            </div>
+          </form>
+          <div id="enum-result" style="margin-top: 0.8rem"></div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      const countdownTimers = {};
+
+      function targetEmail() {
+        return document.getElementById("target-email").value.trim();
+      }
+
+      function setOutcome(id, html) {
+        document.getElementById(id).innerHTML = html;
+      }
+
+      function refusalHtml(result) {
+        return `<span class="error-line">${escapeHtml(
+          result.error ?? result.statusName,
+        )}</span>`;
+      }
+
+      function formatSeconds(seconds) {
+        const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
+        return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+      }
+
+      // Ticks a seconds countdown in one element, replacing any earlier one.
+      function startCountdown(id, seconds, label) {
+        clearInterval(countdownTimers[id]);
+        let left = seconds;
+        const tick = () => {
+          setOutcome(id, `${escapeHtml(label)} ${formatSeconds(left)}`);
+          if (left <= 0) {
+            clearInterval(countdownTimers[id]);
+          }
+          left -= 1;
+        };
+        tick();
+        countdownTimers[id] = setInterval(tick, 1000);
+      }
+
+      function traceRow(attempt, result) {
+        return `<tr>
+          <td>${attempt}</td>
+          <td>${result.status} ${escapeHtml(result.statusName)}</td>
+          <td>${escapeHtml(result.data?.attemptsRemaining ?? "—")}</td>
+          <td>${escapeHtml(result.data?.retryAfterSeconds ?? "—")}</td>
+        </tr>`;
+      }
+
+      onSubmit("lockout-form", async () => {
+        const rows = [];
+        let last = null;
+        // Stops at the lock; six is the most it can take from a fresh start.
+        for (let attempt = 1; attempt <= 6; attempt += 1) {
+          last = await api.post("/auth/session/login", {
+            email: targetEmail(),
+            password: `definitely-wrong-${attempt}`,
+          });
+          rows.push(traceRow(attempt, last));
+          if (last.status !== 401) {
+            break;
+          }
+        }
+        document.getElementById("lockout-trace").innerHTML = `<table>
+            <thead><tr><th>attempt</th><th>status</th>
+              <th>attemptsRemaining</th><th>retryAfterSeconds</th></tr></thead>
+            <tbody>${rows.join("")}</tbody>
+          </table>`;
+        const lockedFor = last.data?.retryAfterSeconds;
+        if (typeof lockedFor === "number") {
+          startCountdown(
+            "lockout-countdown",
+            lockedFor,
+            "locked — try again in",
+          );
+        }
+        return last;
+      });
+
+      onSubmit("right-password-form", async (values) => {
+        const result = await api.post("/auth/session/login", {
+          email: targetEmail(),
+          password: values.password,
+        });
+        setOutcome(
+          "right-password-outcome",
+          result.ok
+            ? result.data?.mfaRequired
+              ? "password accepted — two-factor challenge next"
+              : `signed in as <strong>${escapeHtml(
+                  result.data?.user?.email,
+                )}</strong>`
+            : `${refusalHtml(result)}${
+                result.data?.retryAfterSeconds
+                  ? ` — still locked for ${formatSeconds(
+                      result.data.retryAfterSeconds,
+                    )}`
+                  : ""
+              }`,
+        );
+        noteIfChallenged(result);
+        return result;
+      });
+
+      document
+        .getElementById("hatch-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/auth/magic-link/request", {
+            email: targetEmail(),
+          });
+          setOutcome(
+            "hatch-outcome",
+            result.ok
+              ? `accepted — a link is queued if the account is active: <a href="/inbox?email=${encodeURIComponent(
+                  targetEmail(),
+                )}">inbox</a>`
+              : `⚠️ refused while locked out: ${refusalHtml(result)}`,
+          );
+          showResult(result);
+        });
+
+      // The newest MAGIC mail's token, read from this harness's dev outbox.
+      async function newestMagicToken(email) {
+        const response = await fetch(
+          `/dev/outbox?email=${encodeURIComponent(email)}`,
+        );
+        const rows = await response.json();
+        const link = rows.find((row) => row.type === "MAGIC")?.payload
+          ?.magicLink;
+        return link ? new URL(link).searchParams.get("token") : null;
+      }
+
+      document
+        .getElementById("open-magic-btn")
+        .addEventListener("click", async () => {
+          const token = await newestMagicToken(targetEmail());
+          if (token === null) {
+            setOutcome(
+              "hatch-outcome",
+              '<span class="error-line">no magic link in the outbox for this address</span>',
+            );
+            return;
+          }
+          const result = await api.post("/auth/magic-link/consume", {
+            token: token,
+          });
+          setOutcome(
+            "hatch-outcome",
+            result.ok
+              ? result.data?.mfaRequired
+                ? "link accepted — two-factor challenge next"
+                : `signed in as <strong>${escapeHtml(
+                    result.data?.user?.email,
+                  )}</strong> — the lockout is cleared`
+              : refusalHtml(result),
+          );
+          noteIfChallenged(result);
+          showResult(result);
+          await refreshIdentity();
+        });
+
+      onSubmit("cooldown-form", async (values) => {
+        const result = await api.post(values.endpoint, {
+          email: targetEmail(),
+        });
+        clearInterval(countdownTimers["cooldown-outcome"]);
+        const resendAfter = result.data?.resendAfterSeconds;
+        if (!result.ok) {
+          setOutcome("cooldown-outcome", refusalHtml(result));
+        } else if (typeof resendAfter === "number") {
+          startCountdown("cooldown-outcome", resendAfter, "resend allowed in");
+        } else {
+          setOutcome(
+            "cooldown-outcome",
+            "accepted — no countdown returned; this cooldown is silent",
+          );
+        }
+        return result;
+      });
+
+      document
+        .getElementById("orphan-code-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/auth/mfa/verify", { code: "123456" });
+          setOutcome(
+            "orphan-outcome",
+            result.status === 401
+              ? `refused, as it must be — ${escapeHtml(result.error)}`
+              : `⚠️ NOT refused (${escapeHtml(result.statusName)})`,
+          );
+          showResult(result);
+        });
+
+      function enumerationBody(endpoint, email) {
+        return endpoint === "/auth/session/login"
+          ? { email: email, password: "definitely-wrong-password" }
+          : { email: email };
+      }
+
+      onSubmit("enum-form", async (values) => {
+        const real = await api.post(
+          values.endpoint,
+          enumerationBody(values.endpoint, targetEmail()),
+        );
+        const fake = await api.post(
+          values.endpoint,
+          enumerationBody(values.endpoint, values.fake),
+        );
+        const masked = (payload) =>
+          JSON.stringify(
+            payload,
+            (key, value) =>
+              key === "resendAfterSeconds" ? "<countdown>" : value,
+            2,
+          );
+        const identical = masked(real.raw) === masked(fake.raw);
+        document.getElementById("enum-result").innerHTML = `
+          <div class="panel ${identical ? "ok" : "dead"}">
+            <div class="panel-head"><strong id="enum-verdict">${
+              identical
+                ? "identical — no oracle"
+                : "⚠️ DIFFERENT — this reveals whether an account exists"
+            }</strong></div>
+            <details ${identical ? "" : "open"}>
+              <summary>address under test</summary>
+              <pre>${escapeHtml(JSON.stringify(real.raw, null, 2))}</pre>
+            </details>
+            <details ${identical ? "" : "open"}>
+              <summary>address with no account</summary>
+              <pre>${escapeHtml(JSON.stringify(fake.raw, null, 2))}</pre>
+            </details>
+          </div>`;
+        return fake;
+      });
+
+      document.body.dataset.ready = "true";
+    </script>
+  </body>
+</html>

@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — invitations</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      h3 {
+        margin: 1rem 0 0.2rem;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table.kv th {
+        width: 9rem;
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      td code {
+        display: block;
+        font: 11px var(--mono);
+        color: var(--muted);
+        word-break: break-all;
+      }
+      tbody.dim td {
+        opacity: 0.55;
+      }
+      /* Each invitation is a tbody: its details, then a row of its actions. */
+      tbody[data-invite-id] tr:first-child td {
+        border-bottom: none;
+        padding-bottom: 0.1rem;
+      }
+      .row-actions select {
+        width: auto;
+        margin: 0 0.3rem 0 0;
+        padding: 0.2rem 0.3rem;
+      }
+      .row-actions button {
+        padding: 0.2rem 0.45rem;
+        font-size: 12px;
+        margin: 0 0.2rem 0.2rem 0;
+      }
+      textarea {
+        min-height: 4.5rem;
+        resize: vertical;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.4rem;
+      }
+      .refusal {
+        color: var(--refused);
+        margin: 0.6rem 0 0;
+      }
+      .counts {
+        display: flex;
+        gap: 0.4rem;
+        margin-top: 0.6rem;
+      }
+      #revealed-link input {
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <div id="workspace-picker"></div>
+        <p class="note">
+          Sending, changing, resending, copying a link and revoking need
+          workspace <strong>ADMIN or OWNER</strong>; any member may read the
+          list. The panel shows the call you triggered; the lists refresh
+          quietly after it. "My invitations" needs no workspace at all.
+        </p>
+
+        <section>
+          <h2>Invite — preview, then send</h2>
+          <p class="hint">
+            POST …/invites/preview changes nothing. POST …/invites answers 201
+            and is all or nothing. A VIEWER is free; ADMIN and EDITOR hold a
+            seat. ⚠️ 30 addresses an hour per workspace, spent even on an
+            idempotent retry.
+          </p>
+          <form id="send-form">
+            <label>
+              recipients — one per line, or separated by commas
+              <textarea name="recipients" id="send-recipients"></textarea>
+            </label>
+            <div class="row">
+              <label>
+                wsRole
+                <select name="wsRole" id="send-role">
+                  <option value="EDITOR">EDITOR</option>
+                  <option value="VIEWER">VIEWER</option>
+                  <option value="ADMIN">ADMIN</option>
+                  <option value="OWNER">OWNER — must be refused</option>
+                </select>
+              </label>
+              <label>
+                projectAccess
+                <select name="accessMode" id="send-access">
+                  <option value="">not sent (every project)</option>
+                  <option value="ALL">ALL</option>
+                  <option value="LIMITED">LIMITED — needs project ids</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                projectIds for LIMITED — separated by commas
+                <input type="text" name="projectIds" id="send-project-ids" />
+              </label>
+              <button type="button" id="list-projects">list projects</button>
+            </div>
+            <div id="project-choices"></div>
+            <label>
+              message — optional, shown in the email
+              <textarea name="message" id="send-message"></textarea>
+            </label>
+            <div class="row">
+              <label>
+                Idempotency-Key header — blank sends none
+                <input type="text" name="idempotencyKey" id="send-key" />
+              </label>
+              <button type="button" id="new-key">new key</button>
+            </div>
+            <div class="actions">
+              <button type="button" id="preview-btn">preview</button>
+              <button type="submit" id="send-btn">send invitations</button>
+            </div>
+          </form>
+          <div id="send-outcome"></div>
+        </section>
+
+        <section>
+          <h2>Workspace invitations — GET …/invites</h2>
+          <p class="hint">
+            Newest first. Accepted, declined and revoked ones are never listed.
+            Resend and "copy link" mint a new token, so the link mailed before
+            stops working. ⚠️ 3 resends an hour per invitation.
+          </p>
+          <form id="list-form" class="row">
+            <label>
+              status
+              <select name="status" id="list-status">
+                <option value="pending">pending</option>
+                <option value="expired">expired</option>
+                <option value="all">all</option>
+                <option value="accepted">accepted — must be refused</option>
+              </select>
+            </label>
+            <label>
+              limit (1–100)
+              <input type="text" name="limit" id="list-limit" value="25" />
+            </label>
+            <button type="submit">load</button>
+            <button type="button" id="next-page" disabled>next page</button>
+          </form>
+          <div id="invite-counts" class="counts"></div>
+          <div id="invite-rows"><p class="muted">not loaded</p></div>
+          <div id="revealed-link"></div>
+
+          <h3>edit an invitation — PATCH …/invites/:inviteId</h3>
+          <p class="hint">
+            Sends only the fields not left as they are. Sending nothing must be
+            refused 400. The link is not rotated.
+          </p>
+          <form id="edit-form">
+            <label>
+              inviteId — "edit" on a row fills it
+              <input type="text" name="inviteId" id="edit-id" required />
+            </label>
+            <div class="row">
+              <label>
+                wsRole
+                <select name="wsRole" id="edit-role">
+                  <option value="">leave as it is</option>
+                  <option value="ADMIN">ADMIN</option>
+                  <option value="EDITOR">EDITOR</option>
+                  <option value="VIEWER">VIEWER</option>
+                </select>
+              </label>
+              <label>
+                projectAccess
+                <select name="accessMode" id="edit-access">
+                  <option value="">leave as it is</option>
+                  <option value="ALL">ALL</option>
+                  <option value="LIMITED">LIMITED</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              projectIds for LIMITED
+              <input type="text" name="projectIds" id="edit-project-ids" />
+            </label>
+            <div class="row">
+              <label>
+                message
+                <select name="messageMode" id="edit-message-mode">
+                  <option value="">leave as it is</option>
+                  <option value="set">set to the text below</option>
+                  <option value="clear">clear it (null)</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              <textarea name="message" id="edit-message"></textarea>
+            </label>
+            <button type="submit">save changes</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>My invitations — GET /me/invites</h2>
+          <p class="hint">
+            Pending invitations to your own address, in any organization.
+            Accepting here needs no mailed link; your session proves who you
+            are.
+          </p>
+          <button type="button" id="load-mine">reload my invitations</button>
+          <div id="my-invites"><p class="muted">not loaded</p></div>
+
+          <h3>open an emailed link on this harness</h3>
+          <form id="open-link-form" class="row">
+            <label>
+              the link, or just the token after #
+              <input type="text" name="link" id="open-link" required />
+            </label>
+            <button type="submit">open /invite-tester</button>
+          </form>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      const ROLES = ["ADMIN", "EDITOR", "VIEWER"];
+      let nextCursor = null;
+
+      /**
+       * Split a text box into its non-empty parts.
+       *
+       * @param {string} text
+       * @returns {string[]}
+       */
+      function splitList(text) {
+        return String(text ?? "")
+          .split(/[\s,;]+/)
+          .filter(Boolean);
+      }
+
+      /**
+       * The projectAccess object for a mode, or undefined to leave it out.
+       *
+       * @param {string} mode "", ALL or LIMITED
+       * @param {string} idsText
+       * @returns {object|undefined}
+       */
+      function projectAccessFrom(mode, idsText) {
+        if (mode === "") {
+          return undefined;
+        }
+        if (mode === "ALL") {
+          return { mode: "ALL" };
+        }
+        return { mode: "LIMITED", projectIds: splitList(idsText) };
+      }
+
+      /**
+       * This workspace's invitation path, or null (shown) when none is picked.
+       *
+       * @param {string} [suffix]
+       * @returns {string|null}
+       */
+      function invitesPath(suffix = "") {
+        const workspaceId = requireWorkspaceId();
+        return workspaceId === null
+          ? null
+          : `/workspaces/${encodeURIComponent(workspaceId)}/invites${suffix}`;
+      }
+
+      function formatTime(value) {
+        return value ? new Date(value).toLocaleString() : "—";
+      }
+
+      function timeLeft(seconds) {
+        if (!seconds) {
+          return "expired";
+        }
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        return `${days}d ${hours}h left`;
+      }
+
+      function listHtml(items) {
+        return items.length
+          ? items.map((item) => escapeHtml(item)).join("<br />")
+          : '<span class="muted">none</span>';
+      }
+
+      /**
+       * A refusal as a readable line plus its details.
+       *
+       * @param {object} result
+       * @returns {string}
+       */
+      function refusalHtml(result) {
+        const details =
+          result.errorDetails && Object.keys(result.errorDetails).length
+            ? `<pre>${escapeHtml(
+                JSON.stringify(result.errorDetails, null, 2),
+              )}</pre>`
+            : "";
+        return `<p class="refusal">refused: ${escapeHtml(
+          result.error ?? result.statusName,
+        )}</p>${details}`;
+      }
+
+      function accessText(projectAccess) {
+        if (projectAccess?.mode !== "LIMITED") {
+          return "ALL";
+        }
+        return `LIMITED<code>${projectAccess.projectIds
+          .map(escapeHtml)
+          .join(", ")}</code>`;
+      }
+
+      // --- invite: preview and send ---
+
+      function readSendForm() {
+        const values = Object.fromEntries(
+          new FormData(document.getElementById("send-form")).entries(),
+        );
+        const body = {
+          recipients: splitList(values.recipients),
+          wsRole: values.wsRole,
+        };
+        const projectAccess = projectAccessFrom(
+          values.accessMode,
+          values.projectIds,
+        );
+        if (projectAccess !== undefined) {
+          body.projectAccess = projectAccess;
+        }
+        if (values.message.trim() !== "") {
+          body.message = values.message;
+        }
+        const headers = values.idempotencyKey.trim()
+          ? { "Idempotency-Key": values.idempotencyKey.trim() }
+          : {};
+        return { body: body, headers: headers };
+      }
+
+      function renderPreview(data) {
+        return `<h3>preview — nothing was sent</h3>
+          <table class="kv">
+            <tr><th>valid</th><td>${listHtml(data.valid)}</td></tr>
+            <tr><th>invalid</th><td>${listHtml(
+              data.invalid.map((item) => `${item.email} — ${item.reason}`),
+            )}</td></tr>
+            <tr><th>alreadyMember</th><td>${listHtml(data.alreadyMember)}</td></tr>
+            <tr><th>alreadyInvited</th><td>${listHtml(
+              data.alreadyInvited,
+            )}</td></tr>
+            <tr><th>seats</th><td>used ${escapeHtml(
+              data.seats.used,
+            )} · free ${escapeHtml(data.seats.free)} · wouldConsume ${escapeHtml(
+              data.seats.wouldConsume,
+            )} · shortBy ${escapeHtml(data.seats.shortBy)}</td></tr>
+          </table>`;
+      }
+
+      function renderSent(data) {
+        const rows = data.invites
+          .map(
+            (invite) => `<tr data-sent-id="${escapeHtml(invite.inviteId)}">
+              <td>${escapeHtml(invite.email)}</td>
+              <td>${escapeHtml(invite.wsRole)}</td>
+              <td><code>${escapeHtml(invite.inviteId)}</code></td>
+              <td>${escapeHtml(formatTime(invite.expiresAt))}</td>
+            </tr>`,
+          )
+          .join("");
+        return `<h3>sent ${data.invites.length}</h3>
+          <table>
+            <tr><th>email</th><th>role</th><th>inviteId</th><th>expires</th></tr>
+            ${rows || '<tr><td colspan="4" class="muted">nothing new</td></tr>'}
+          </table>
+          <p class="muted">already invited, skipped: ${listHtml(
+            data.alreadyInvited,
+          )}</p>`;
+      }
+
+      function showOutcome(result, render) {
+        document.getElementById("send-outcome").innerHTML = result.ok
+          ? render(result.data)
+          : refusalHtml(result);
+      }
+
+      document
+        .getElementById("preview-btn")
+        .addEventListener("click", async () => {
+          const path = invitesPath("/preview");
+          if (path === null) {
+            return;
+          }
+          const { body } = readSendForm();
+          const result = await api.post(path, {
+            recipients: body.recipients,
+            wsRole: body.wsRole,
+          });
+          showResult(result);
+          showOutcome(result, renderPreview);
+        });
+
+      onSubmit("send-form", async () => {
+        const path = invitesPath();
+        if (path === null) {
+          return undefined;
+        }
+        const { body, headers } = readSendForm();
+        const result = await api.post(path, body, headers);
+        showOutcome(result, renderSent);
+        loadInvites();
+        return result;
+      });
+
+      document.getElementById("new-key").addEventListener("click", () => {
+        document.getElementById("send-key").value = `invite-${Date.now()}`;
+      });
+
+      // Project ids are long; listing them saves copying from another page.
+      document
+        .getElementById("list-projects")
+        .addEventListener("click", async () => {
+          const workspaceId = requireWorkspaceId();
+          if (workspaceId === null) {
+            return;
+          }
+          const result = await api.get(
+            `/workspaces/${encodeURIComponent(workspaceId)}/projects`,
+          );
+          showResult(result);
+          const choices = document.getElementById("project-choices");
+          if (!result.ok) {
+            choices.innerHTML = refusalHtml(result);
+            return;
+          }
+          choices.innerHTML = result.data.items.length
+            ? `<table>${result.data.items
+                .map(
+                  (project) => `<tr>
+                    <td>${escapeHtml(project.name)}<code>${escapeHtml(
+                      project.projectId,
+                    )}</code></td>
+                    <td><button type="button" data-add-project="${escapeHtml(
+                      project.projectId,
+                    )}">add</button></td>
+                  </tr>`,
+                )
+                .join("")}</table>`
+            : '<p class="muted">no projects in this workspace</p>';
+        });
+
+      document
+        .getElementById("project-choices")
+        .addEventListener("click", (event) => {
+          const button = event.target.closest("[data-add-project]");
+          if (button === null) {
+            return;
+          }
+          const input = document.getElementById("send-project-ids");
+          const ids = splitList(input.value);
+          if (!ids.includes(button.dataset.addProject)) {
+            ids.push(button.dataset.addProject);
+          }
+          input.value = ids.join(", ");
+          document.getElementById("send-access").value = "LIMITED";
+        });
+
+      // --- the workspace's invitations ---
+
+      function renderRow(invite) {
+        const roleOptions = ROLES.map(
+          (role) =>
+            `<option value="${role}"${
+              role === invite.wsRole ? " selected" : ""
+            }>${role}</option>`,
+        ).join("");
+        return `<tbody data-invite-id="${escapeHtml(
+          invite.inviteId,
+        )}" class="${invite.isExpired ? "dim" : ""}">
+          <tr>
+            <td>${escapeHtml(invite.email)}<code>${escapeHtml(
+              invite.inviteId,
+            )}</code></td>
+            <td class="role-cell">${escapeHtml(invite.wsRole)}</td>
+            <td>${accessText(invite.projectAccess)}</td>
+            <td><span class="chip">${escapeHtml(invite.status)}</span><br />
+              <span class="muted">${escapeHtml(
+                timeLeft(invite.secondsUntilExpiry),
+              )}</span></td>
+            <td>${escapeHtml(invite.invitedBy?.name ?? "—")}<br />
+              <span class="muted">sent ${escapeHtml(
+                formatTime(invite.lastSentAt),
+              )}</span></td>
+            <td class="resends">${escapeHtml(invite.resendCount)}</td>
+            <td>${invite.seatRefHeld ? "yes" : "no"}</td>
+          </tr>
+          <tr><td colspan="7" class="row-actions">
+            <select data-role-select>${roleOptions}</select>
+            <button type="button" data-action="role">change role</button>
+            <button type="button" data-action="resend">resend</button>
+            <button type="button" data-action="link">copy link</button>
+            <button type="button" data-action="edit">edit</button>
+            <button type="button" data-action="revoke">revoke</button>
+          </td></tr>
+        </tbody>`;
+      }
+
+      /**
+       * Load a page of the workspace's invitations into the table.
+       *
+       * @param {{quiet?: boolean, cursor?: string|null}} [options] quiet
+       *   leaves the panel alone, for refreshes nobody asked for
+       * @returns {Promise<void>}
+       */
+      async function loadInvites({ quiet = true, cursor = null } = {}) {
+        const container = document.getElementById("invite-rows");
+        const workspace = currentWorkspace();
+        if (workspace === null) {
+          container.innerHTML = '<p class="muted">no workspace picked</p>';
+          document.getElementById("invite-counts").innerHTML = "";
+          return;
+        }
+        const query = new URLSearchParams({
+          status: document.getElementById("list-status").value,
+        });
+        const limit = document.getElementById("list-limit").value.trim();
+        if (limit !== "") {
+          query.set("limit", limit);
+        }
+        if (cursor !== null) {
+          query.set("cursor", cursor);
+        }
+        const result = await api.get(
+          `/workspaces/${encodeURIComponent(workspace.id)}/invites?${query}`,
+        );
+        if (!quiet) {
+          showResult(result);
+        }
+        if (!result.ok) {
+          container.innerHTML = refusalHtml(result);
+          return;
+        }
+        const { items, counts } = result.data;
+        nextCursor = result.data.nextCursor;
+        document.getElementById("next-page").disabled = nextCursor === null;
+        document.getElementById("invite-counts").innerHTML = `
+          <span class="chip">active ${escapeHtml(counts.active)}</span>
+          <span class="chip">expired ${escapeHtml(counts.expired)}</span>
+          <span class="chip">revoked ${escapeHtml(counts.revoked)}</span>`;
+        container.innerHTML = items.length
+          ? `<table>
+              <thead><tr><th>email</th><th>role</th><th>access</th>
+                <th>status</th><th>invited by</th><th>resends</th><th>seat</th>
+              </tr></thead>
+              ${items.map(renderRow).join("")}
+            </table>`
+          : '<p class="muted">no invitations match</p>';
+      }
+
+      function renderRevealedLink(data) {
+        const token = data.url.split("#")[1] ?? "";
+        document.getElementById("revealed-link").innerHTML = `
+          <h3>copied link — the one mailed before no longer works</h3>
+          <input type="text" readonly value="${escapeHtml(data.url)}" />
+          <p class="muted">expires ${escapeHtml(formatTime(data.expiresAt))} ·
+            <a href="/invite-tester#${escapeHtml(token)}" target="_blank"
+              id="revealed-open">open it on this harness</a></p>`;
+      }
+
+      function fillEditForm(inviteId) {
+        document.getElementById("edit-id").value = inviteId;
+        document.getElementById("edit-id").scrollIntoView({ block: "center" });
+      }
+
+      /**
+       * Run one of a row's buttons against its invitation.
+       *
+       * @param {string} action role, resend, link, edit or revoke
+       * @param {HTMLElement} row the invitation's tbody
+       * @returns {Promise<void>}
+       */
+      async function rowAction(action, row) {
+        const inviteId = row.dataset.inviteId;
+        if (action === "edit") {
+          fillEditForm(inviteId);
+          return;
+        }
+        const path = invitesPath(`/${encodeURIComponent(inviteId)}`);
+        if (path === null) {
+          return;
+        }
+        let result;
+        if (action === "role") {
+          const wsRole = row.querySelector("[data-role-select]").value;
+          result = await api.patch(path, { wsRole: wsRole });
+        } else if (action === "resend") {
+          result = await api.post(`${path}/resend`);
+        } else if (action === "link") {
+          result = await api.get(`${path}/link`);
+        } else {
+          result = await api.del(path);
+        }
+        showResult(result);
+        if (action === "link" && result.ok) {
+          renderRevealedLink(result.data);
+        }
+        await loadInvites();
+      }
+
+      document
+        .getElementById("invite-rows")
+        .addEventListener("click", (event) => {
+          const button = event.target.closest("button[data-action]");
+          if (button !== null) {
+            rowAction(
+              button.dataset.action,
+              button.closest("[data-invite-id]"),
+            );
+          }
+        });
+
+      onSubmit("list-form", async () => {
+        await loadInvites({ quiet: false });
+        return undefined;
+      });
+
+      document.getElementById("next-page").addEventListener("click", () => {
+        loadInvites({ quiet: false, cursor: nextCursor });
+      });
+
+      onSubmit("edit-form", async (values) => {
+        const path = invitesPath(`/${encodeURIComponent(values.inviteId)}`);
+        if (path === null) {
+          return undefined;
+        }
+        const body = {};
+        if (values.wsRole !== "") {
+          body.wsRole = values.wsRole;
+        }
+        const projectAccess = projectAccessFrom(
+          values.accessMode,
+          values.projectIds,
+        );
+        if (projectAccess !== undefined) {
+          body.projectAccess = projectAccess;
+        }
+        if (values.messageMode === "set") {
+          body.message = values.message;
+        } else if (values.messageMode === "clear") {
+          body.message = null;
+        }
+        const result = await api.patch(path, body);
+        loadInvites();
+        return result;
+      });
+
+      // --- my invitations ---
+
+      function renderMine(invites) {
+        if (invites.length === 0) {
+          return '<p class="muted">no invitations wait for your address</p>';
+        }
+        return `<table>
+          <tr><th>workspace</th><th>role</th><th>invited by</th>
+            <th>sent</th><th>expires</th><th></th></tr>
+          ${invites
+            .map(
+              (invite) => `<tr data-my-invite-id="${escapeHtml(
+                invite.inviteId,
+              )}">
+                <td>${escapeHtml(invite.workspaceName ?? "—")}<code>${escapeHtml(
+                  invite.inviteId,
+                )}</code></td>
+                <td>${escapeHtml(invite.role)}</td>
+                <td>${escapeHtml(invite.invitedBy?.name ?? "—")}</td>
+                <td>${escapeHtml(formatTime(invite.sentAt))}</td>
+                <td>${escapeHtml(formatTime(invite.expiresAt))}</td>
+                <td class="row-actions">
+                  <button type="button" data-mine="accept">accept</button>
+                  <button type="button" data-mine="decline">decline</button>
+                </td>
+              </tr>`,
+            )
+            .join("")}
+        </table>`;
+      }
+
+      async function loadMine({ quiet = true } = {}) {
+        const result = await api.get("/me/invites");
+        if (!quiet) {
+          showResult(result);
+        }
+        document.getElementById("my-invites").innerHTML = result.ok
+          ? renderMine(result.data)
+          : refusalHtml(result);
+      }
+
+      document
+        .getElementById("my-invites")
+        .addEventListener("click", async (event) => {
+          const button = event.target.closest("button[data-mine]");
+          if (button === null) {
+            return;
+          }
+          const inviteId = button.closest("tr").dataset.myInviteId;
+          const result = await api.post(
+            `/me/invites/${encodeURIComponent(inviteId)}/${button.dataset.mine}`,
+          );
+          showResult(result);
+          await loadMine();
+          // A join adds a workspace to the picker.
+          if (result.ok && button.dataset.mine === "accept") {
+            await renderWorkspacePicker();
+          }
+        });
+
+      document
+        .getElementById("load-mine")
+        .addEventListener("click", () => loadMine({ quiet: false }));
+
+      document
+        .getElementById("open-link-form")
+        .addEventListener("submit", (event) => {
+          event.preventDefault();
+          const text = document.getElementById("open-link").value.trim();
+          const token = text.includes("#") ? text.split("#")[1] : text;
+          location.href = `/invite-tester#${token}`;
+        });
+
+      onWorkspaceChange(() => loadInvites());
+      loadMine();
+    </script>
+  </body>
+</html>

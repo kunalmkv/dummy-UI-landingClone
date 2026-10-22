@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra auth harness — sessions</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.45rem 0.5rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+        font-size: 12px;
+      }
+      td .muted {
+        font-size: 11.5px;
+        word-break: break-all;
+      }
+      td.actions button {
+        padding: 0.25rem 0.55rem;
+        font-size: 12px;
+      }
+      tr.ended td {
+        opacity: 0.6;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <p class="note">
+          To see more than one row, sign in from a second browser or a private
+          window — another tab shares this cookie and so this session.
+        </p>
+
+        <section>
+          <h2>Sessions</h2>
+          <p class="hint">
+            <code>GET /auth/session/list</code> — every device, newest first.
+            The id is the token's SHA-256, not the token. Nothing marks which
+            row is this browser: revoke one and see whether you are signed out.
+            Revoked rows stay listed with the time they ended.
+          </p>
+          <div class="row">
+            <button type="button" id="refresh-sessions">refresh</button>
+            <button type="button" id="logout-this">sign out this device</button>
+            <button type="button" id="logout-all">sign out everywhere</button>
+          </div>
+          <div id="sessions" style="margin-top: 0.9rem">
+            <p class="muted">not loaded</p>
+          </div>
+        </section>
+
+        <section>
+          <h2>Revoke by id</h2>
+          <p class="hint">
+            <code>POST /auth/session/revoke</code> — the same call as a row's
+            button, with an id you type. Someone else's id and a made-up one
+            both answer 404, so ids cannot be probed.
+          </p>
+          <form id="revoke-form">
+            <div class="row">
+              <label>
+                sessionId
+                <input type="text" name="sessionId" autocomplete="off" />
+              </label>
+              <button type="submit">revoke</button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      function formatDate(value) {
+        return value ? new Date(value).toLocaleString() : "—";
+      }
+
+      function sessionRow(session) {
+        const ended = session.revokedAt !== null;
+        return `<tr data-id="${escapeHtml(session.id)}"${
+          ended ? ' class="ended"' : ""
+        }>
+          <td><span class="badge">${escapeHtml(session.id.slice(0, 12))}…</span>
+            <div class="muted">${escapeHtml(session.userAgent || "no user-agent")}</div></td>
+          <td>${escapeHtml(session.ip || "—")}</td>
+          <td>${escapeHtml(formatDate(session.createdAt))}
+            <div class="muted">last seen ${escapeHtml(formatDate(session.lastSeenAt))}</div></td>
+          <td>${
+            ended
+              ? `<span class="chip">ended</span>
+                 <div class="muted">${escapeHtml(formatDate(session.revokedAt))}</div>`
+              : '<span class="chip">live</span>'
+          }</td>
+          <td class="actions"><button type="button" data-revoke="${escapeHtml(
+            session.id,
+          )}">revoke</button></td>
+        </tr>`;
+      }
+
+      function renderSessions(result) {
+        const container = document.getElementById("sessions");
+        if (!result.ok) {
+          container.innerHTML = `<p class="error-line">${escapeHtml(
+            result.error ?? result.statusName,
+          )}</p>`;
+          return;
+        }
+        const sessions = result.data.sessions;
+        container.innerHTML = sessions.length
+          ? `<table>
+              <thead><tr><th>session</th><th>ip</th><th>created</th>
+                <th>state</th><th></th></tr></thead>
+              <tbody>${sessions.map(sessionRow).join("")}</tbody>
+            </table>`
+          : '<p class="muted">no sessions</p>';
+      }
+
+      // After an action the list is redrawn quietly, so the panel keeps
+      // showing the action's own answer rather than the list's.
+      async function loadSessions(showInPanel) {
+        const result = await api.get("/auth/session/list");
+        if (showInPanel) {
+          showResult(result);
+        }
+        renderSessions(result);
+      }
+
+      async function afterAction(result) {
+        await loadSessions(false);
+        showResult(result);
+        await refreshIdentity();
+      }
+
+      function revoke(sessionId) {
+        return api.post("/auth/session/revoke", { sessionId: sessionId });
+      }
+
+      document
+        .getElementById("sessions")
+        .addEventListener("click", async (event) => {
+          const button = event.target.closest("button[data-revoke]");
+          if (button === null) {
+            return;
+          }
+          button.disabled = true;
+          await afterAction(await revoke(button.dataset.revoke));
+        });
+
+      onSubmit("revoke-form", async (values) => {
+        const result = await revoke(values.sessionId.trim());
+        await loadSessions(false);
+        return result;
+      });
+
+      document
+        .getElementById("refresh-sessions")
+        .addEventListener("click", () => loadSessions(true));
+
+      // Ends only this device's row; public, so it answers even signed out.
+      document
+        .getElementById("logout-this")
+        .addEventListener("click", async () =>
+          afterAction(await api.post("/auth/session/logout")),
+        );
+
+      // Includes this device: the cookie held here dies too.
+      document
+        .getElementById("logout-all")
+        .addEventListener("click", async () =>
+          afterAction(await api.post("/auth/session/logout-all")),
+        );
+
+      (async () => {
+        await loadSessions(true);
+        document.body.dataset.ready = "true";
+      })();
+    </script>
+  </body>
+</html>

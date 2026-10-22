@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — projects</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main {
+        max-width: 1400px;
+        grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      }
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      #workspace-picker {
+        margin-bottom: 1rem;
+      }
+      a {
+        color: var(--accent);
+      }
+      input[type="number"] {
+        width: 100%;
+        margin-top: 0.2rem;
+        padding: 0.45rem 0.55rem;
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        font: 13px var(--mono);
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table.kv th {
+        width: 8rem;
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      td code {
+        display: block;
+        font: 11px var(--mono);
+        color: var(--muted);
+        word-break: break-all;
+      }
+      td.row-actions {
+        white-space: nowrap;
+      }
+      td.row-actions button {
+        padding: 0.2rem 0.45rem;
+        font-size: 12px;
+        margin: 0 0.25rem 0.25rem 0;
+      }
+      tr.archived td {
+        opacity: 0.6;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.7rem;
+      }
+      .box {
+        margin-top: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <div id="workspace-picker"></div>
+
+        <p class="note">
+          Anyone in the workspace may <strong>read</strong> projects. Renaming
+          needs <strong>EDITOR or above</strong>; creating and archiving need
+          <strong>ADMIN or OWNER</strong> (an org owner or admin counts as a
+          workspace admin). Each ACTIVE project takes one place in the plan's
+          projects-per-workspace limit (free: 5); archiving gives it back, and
+          there is no unarchive.
+        </p>
+
+        <section>
+          <h2>Call as an API token — optional</h2>
+          <p class="hint">
+            Every project route also takes a token minted on
+            <a href="/tokens">api tokens</a>. When this box is filled, every
+            call on this page sends <code>Authorization: Bearer …</code> and the
+            API acts as the token, not the cookie: reading needs scope
+            reports.read or admin, every change needs admin. Leave it blank to
+            call as yourself.
+          </p>
+          <label>
+            API token secret
+            <input type="text" id="api-token" placeholder="ifi_live_…" />
+          </label>
+        </section>
+
+        <section>
+          <h2>Projects — GET /workspaces/:id/projects</h2>
+          <p class="hint">
+            Newest first. Blank filters are not sent (a blank appId would be
+            refused). q matches the start of a name. "next page" sends the
+            filters of the page it continues plus its nextCursor; the cursor box
+            is for pasting one by hand.
+          </p>
+          <form id="list-form">
+            <div class="row">
+              <label>
+                status
+                <select name="status">
+                  <option value="">left out (ACTIVE)</option>
+                  <option>ACTIVE</option>
+                  <option>ARCHIVED</option>
+                </select>
+              </label>
+              <label>
+                appId
+                <select name="appId" data-apps="any"></select>
+              </label>
+              <label>
+                q
+                <input type="text" name="q" placeholder="start of a name" />
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                limit
+                <input type="number" name="limit" placeholder="25" />
+              </label>
+              <label>
+                cursor
+                <input type="text" name="cursor" placeholder="nextCursor" />
+              </label>
+              <button type="submit">list</button>
+            </div>
+          </form>
+          <div id="projects-table" class="table-wrap">
+            <p class="muted">not loaded</p>
+          </div>
+          <div class="actions">
+            <button type="button" id="next-page" hidden>next page</button>
+            <span id="cursor-note" class="muted"></span>
+          </div>
+        </section>
+
+        <section>
+          <h2>Create — POST /workspaces/:id/projects</h2>
+          <p class="hint">
+            Answers 201. Names are not unique. Any app of the grid is accepted,
+            coming-soon ones too. A blank vertical is left out.
+          </p>
+          <form id="create-form">
+            <div class="row">
+              <label>
+                appId
+                <select name="appId" data-apps="none"></select>
+              </label>
+              <label>
+                name — 1 to 100 characters
+                <input type="text" name="name" />
+              </label>
+              <label>
+                vertical — optional
+                <input type="text" name="vertical" />
+              </label>
+            </div>
+            <button type="submit">create project</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>One project</h2>
+          <p class="hint">
+            "select" on a row fills the id. GET works on ACTIVE and ARCHIVED
+            projects; a LIMITED member gets 404 for one they were not given.
+          </p>
+          <form id="get-form">
+            <div class="row">
+              <label>
+                projectId
+                <input type="text" id="project-id" name="projectId" />
+              </label>
+              <button type="submit">get</button>
+              <button type="button" id="archive-button">archive</button>
+            </div>
+          </form>
+          <div id="project-detail" class="box"></div>
+
+          <h2 style="margin-top: 1.2rem">
+            Change — PATCH /workspaces/:id/projects/:projectId
+          </h2>
+          <p class="hint">
+            Blank boxes are left out, so sending both blank shows the refusal.
+            "clear vertical" sends <code>vertical: null</code>. An archived
+            project can still be renamed and stays archived.
+          </p>
+          <form id="change-form">
+            <div class="row">
+              <label>
+                name
+                <input type="text" name="name" />
+              </label>
+              <label>
+                vertical
+                <input type="text" name="vertical" />
+              </label>
+            </div>
+            <label class="checkbox">
+              <input type="checkbox" name="clearVertical" />
+              clear vertical — send vertical: null
+            </label>
+            <button type="submit">save changes</button>
+          </form>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // The keys of backend/config/apps.config.js, the only appIds accepted.
+      const APP_IDS = [
+        "affify",
+        "journey",
+        "reach",
+        "insights",
+        "vault",
+        "connect",
+      ];
+
+      // The list as last loaded, so an action redraws one row from its answer
+      // and the panel keeps showing that action.
+      let projects = [];
+      let nextCursor = null;
+      // The filters of the page on screen, which "next page" must send again.
+      let listedFilters = new URLSearchParams();
+
+      const byId = (id) => document.getElementById(id);
+
+      /**
+       * Call a route under the picked workspace, as the API token when one
+       * is filled in.
+       *
+       * @returns {Promise<object|undefined>} undefined when none is picked
+       */
+      async function workspaceCall(method, suffix, body) {
+        const workspaceId = requireWorkspaceId();
+        if (workspaceId === null) {
+          return undefined;
+        }
+        const token = byId("api-token").value.trim();
+        return api.call(
+          method,
+          `/workspaces/${encodeURIComponent(workspaceId)}${suffix}`,
+          body,
+          token === "" ? {} : { Authorization: `Bearer ${token}` },
+        );
+      }
+
+      function projectSuffix(projectId, rest = "") {
+        return `/projects/${encodeURIComponent(projectId)}${rest}`;
+      }
+
+      function when(iso) {
+        return iso ? new Date(iso).toLocaleString() : "—";
+      }
+
+      function refusalText(result) {
+        return `<p class="error-line">${escapeHtml(
+          result.error ?? result.statusName,
+        )}</p>`;
+      }
+
+      /**
+       * The projectId the one-project forms act on, or a refusal in the panel.
+       *
+       * @returns {string|null}
+       */
+      function selectedProjectId() {
+        const projectId = byId("project-id").value.trim();
+        if (projectId !== "") {
+          return projectId;
+        }
+        showResult({
+          ok: false,
+          status: null,
+          statusName: "NO PROJECT",
+          error: 'press "select" on a row first, or paste a projectId',
+          request: { method: "—", path: "—", body: null },
+          raw: null,
+          ms: 0,
+        });
+        return null;
+      }
+
+      // --- the list ------------------------------------------------------
+
+      function formFilters() {
+        const params = new URLSearchParams();
+        for (const [name, value] of new FormData(byId("list-form"))) {
+          if (String(value).trim() !== "") {
+            params.set(name, String(value).trim());
+          }
+        }
+        return params;
+      }
+
+      /**
+       * One page with the form's filters, or the next page of the list on
+       * screen when given its cursor. The caller shows the result.
+       *
+       * @param {string|null} [cursor]
+       * @returns {Promise<object|undefined>}
+       */
+      async function loadProjects(cursor = null) {
+        const params =
+          cursor === null ? formFilters() : new URLSearchParams(listedFilters);
+        if (cursor !== null) {
+          params.set("cursor", cursor);
+        }
+        const query = params.toString();
+        const result = await workspaceCall(
+          "GET",
+          query === "" ? "/projects" : `/projects?${query}`,
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        if (!result.ok) {
+          nextCursor = null;
+          byId("projects-table").innerHTML = refusalText(result);
+          hidePaging();
+          return result;
+        }
+        if (cursor === null) {
+          params.delete("cursor");
+          listedFilters = params;
+          projects = result.data.items;
+        } else {
+          projects = projects.concat(result.data.items);
+        }
+        nextCursor = result.data.nextCursor;
+        renderProjects();
+        return result;
+      }
+
+      function projectRow(project) {
+        const id = escapeHtml(project.projectId);
+        return `<tr data-project-id="${id}"${
+          project.status === "ARCHIVED" ? ' class="archived"' : ""
+        }>
+          <td><strong data-field="name">${escapeHtml(project.name)}</strong>
+            <code>${id}</code></td>
+          <td data-field="appId">${escapeHtml(project.appId)}</td>
+          <td data-field="vertical">${escapeHtml(project.vertical ?? "—")}</td>
+          <td><span class="chip" data-field="status">${escapeHtml(
+            project.status,
+          )}</span></td>
+          <td class="muted">${escapeHtml(when(project.createdAt))}
+            <code>by ${escapeHtml(project.createdBy)}</code></td>
+          <td class="row-actions">
+            <button type="button" data-action="select" data-project-id="${id}">select</button>
+            <button type="button" data-action="archive" data-project-id="${id}">archive</button>
+          </td>
+        </tr>`;
+      }
+
+      // A refused or absent list has no pages to talk about.
+      function hidePaging() {
+        byId("next-page").hidden = true;
+        byId("cursor-note").textContent = "";
+      }
+
+      function renderPaging() {
+        byId("next-page").hidden = nextCursor === null;
+        const filters = listedFilters.toString();
+        byId("cursor-note").textContent =
+          nextCursor === null
+            ? `${projects.length} shown · last page`
+            : `${projects.length} shown · more after this${
+                filters ? ` · next page resends ${filters}` : ""
+              }`;
+      }
+
+      function renderProjects() {
+        byId("projects-table").innerHTML =
+          projects.length === 0
+            ? '<p class="muted">no projects match</p>'
+            : `<table>
+                <thead><tr><th>project</th><th>app</th><th>vertical</th>
+                  <th>status</th><th>created</th><th></th></tr></thead>
+                <tbody>${projects.map(projectRow).join("")}</tbody>
+              </table>`;
+        renderPaging();
+      }
+
+      // --- one project ---------------------------------------------------
+
+      function renderDetail(result) {
+        const box = byId("project-detail");
+        if (!result.ok) {
+          box.innerHTML = refusalText(result);
+          return;
+        }
+        const fields = [
+          "projectId",
+          "appId",
+          "name",
+          "vertical",
+          "status",
+          "createdBy",
+          "createdAt",
+          "updatedAt",
+        ];
+        box.innerHTML = `<table class="kv">${fields
+          .map(
+            (field) =>
+              `<tr><th>${field}</th><td data-field="${field}">${escapeHtml(
+                result.data[field] ?? "—",
+              )}</td></tr>`,
+          )
+          .join("")}</table>`;
+      }
+
+      /**
+       * Show a project the API answered with: in the detail box, and in its
+       * row when the list has it.
+       *
+       * @param {object} result
+       * @returns {void}
+       */
+      function applyProject(result) {
+        renderDetail(result);
+        if (!result.ok) {
+          return;
+        }
+        const changed = result.data;
+        byId("project-id").value = changed.projectId;
+        projects = projects.map((project) =>
+          project.projectId === changed.projectId ? changed : project,
+        );
+        renderProjects();
+      }
+
+      async function selectProject(projectId) {
+        byId("project-id").value = projectId;
+        const result = await workspaceCall("GET", projectSuffix(projectId));
+        if (result !== undefined) {
+          renderDetail(result);
+        }
+        return result;
+      }
+
+      async function archiveProject(projectId) {
+        byId("project-id").value = projectId;
+        const result = await workspaceCall(
+          "POST",
+          projectSuffix(projectId, "/archive"),
+          {},
+        );
+        if (result !== undefined) {
+          applyProject(result);
+        }
+        return result;
+      }
+
+      // --- wiring --------------------------------------------------------
+
+      /**
+       * Disable a button while its call runs, then show what came back.
+       *
+       * @param {HTMLButtonElement} button
+       * @param {Function} work returns a result, or undefined
+       * @returns {Promise<void>}
+       */
+      async function withButton(button, work) {
+        button.disabled = true;
+        try {
+          const result = await work();
+          if (result !== undefined) {
+            showResult(result);
+          }
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function fillAppSelects() {
+        document.querySelectorAll("select[data-apps]").forEach((select) => {
+          const blank =
+            select.dataset.apps === "any"
+              ? '<option value="">any app</option>'
+              : "";
+          select.innerHTML =
+            blank +
+            APP_IDS.map((appId) => `<option>${appId}</option>`).join("");
+        });
+      }
+
+      const ROW_ACTIONS = { select: selectProject, archive: archiveProject };
+
+      byId("projects-table").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (button !== null) {
+          withButton(button, () =>
+            ROW_ACTIONS[button.dataset.action](button.dataset.projectId),
+          );
+        }
+      });
+
+      onSubmit("list-form", () => loadProjects());
+
+      byId("next-page").addEventListener("click", (event) =>
+        withButton(event.currentTarget, () => loadProjects(nextCursor)),
+      );
+
+      onSubmit("create-form", async (values) => {
+        const body = { appId: values.appId, name: values.name };
+        if (values.vertical.trim() !== "") {
+          body.vertical = values.vertical;
+        }
+        const result = await workspaceCall("POST", "/projects", body);
+        if (result?.ok) {
+          // Newest first, so it heads an ACTIVE list whatever page is shown.
+          if (listedFilters.get("status") !== "ARCHIVED") {
+            projects = [result.data, ...projects];
+          }
+          applyProject(result);
+        }
+        return result;
+      });
+
+      onSubmit("get-form", () => {
+        const projectId = selectedProjectId();
+        return projectId === null ? undefined : selectProject(projectId);
+      });
+
+      byId("archive-button").addEventListener("click", (event) => {
+        const projectId = selectedProjectId();
+        if (projectId !== null) {
+          withButton(event.currentTarget, () => archiveProject(projectId));
+        }
+      });
+
+      onSubmit("change-form", async (values) => {
+        const projectId = selectedProjectId();
+        if (projectId === null) {
+          return undefined;
+        }
+        const body = {};
+        if (values.name.trim() !== "") {
+          body.name = values.name;
+        }
+        if (values.clearVertical === "on") {
+          body.vertical = null;
+        } else if (values.vertical.trim() !== "") {
+          body.vertical = values.vertical;
+        }
+        const result = await workspaceCall(
+          "PATCH",
+          projectSuffix(projectId),
+          body,
+        );
+        if (result !== undefined) {
+          applyProject(result);
+        }
+        return result;
+      });
+
+      // A new workspace: forget the old one's projects and list this one's.
+      onWorkspaceChange(async (workspace) => {
+        projects = [];
+        nextCursor = null;
+        byId("project-id").value = "";
+        byId("project-detail").innerHTML = "";
+        if (workspace === null) {
+          byId("projects-table").innerHTML =
+            '<p class="muted">no workspace picked</p>';
+          hidePaging();
+          return;
+        }
+        const result = await loadProjects();
+        if (result !== undefined) {
+          showResult(result);
+        }
+      });
+
+      fillAppSelects();
+    </script>
+  </body>
+</html>

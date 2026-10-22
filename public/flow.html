@@ -1,0 +1,1068 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — after sign-in</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main {
+        grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+      }
+      section + section {
+        margin-top: 1rem;
+      }
+      section.current {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent);
+      }
+      .step-head {
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .step-head h2 {
+        flex: 1;
+      }
+      .screen-id {
+        font: 11px var(--mono);
+        color: var(--muted);
+      }
+      .calls {
+        display: grid;
+        gap: 0.35rem;
+        margin: 0.4rem 0 0.7rem;
+      }
+      .call {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 12.5px;
+      }
+      .call code {
+        font-family: var(--mono);
+        flex: 1;
+        min-width: 14rem;
+      }
+      .call select {
+        font-size: 12px;
+        padding: 0.15rem 0.3rem;
+        width: auto;
+      }
+      .out {
+        margin-top: 0.6rem;
+        font-size: 13px;
+      }
+      .out:empty {
+        display: none;
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.15rem 0.8rem;
+        font-size: 12.5px;
+      }
+      .kv dt {
+        color: var(--muted);
+      }
+      .kv dd {
+        margin: 0;
+        font-family: var(--mono);
+        word-break: break-word;
+      }
+      .decision {
+        margin-top: 0.7rem;
+        padding: 0.6rem 0.8rem;
+        border-left: 3px solid var(--accent);
+        background: var(--surface-2);
+        border-radius: 0 5px 5px 0;
+      }
+      .decision strong {
+        color: var(--accent);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.5rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.3rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .state-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        align-items: center;
+        margin-bottom: 1rem;
+        font-size: 12.5px;
+      }
+      .warn {
+        color: var(--refused);
+      }
+      .bad {
+        color: var(--dead);
+      }
+      .good {
+        color: var(--ok);
+      }
+      .deeper a {
+        margin-right: 0.6rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <p class="note">
+          What happens <strong>after you sign in</strong>, in the order the app
+          does it (design §5.14 F-1 → F-7, F-18). Each step carries its ids into
+          the next. Every call goes to the <strong>real API</strong> (the banner
+          names it) and <strong>everything is saved</strong>: a workspace you
+          create shows up in the picker, and an invite sends a real email — read
+          it in the <a href="/inbox">dev inbox</a>.
+        </p>
+
+        <div class="state-bar" id="state-bar"></div>
+
+        <button type="button" id="run-journey">
+          ▶ run the whole journey
+        </button>
+
+        <!-- 0 -->
+        <section id="step-you">
+          <div class="step-head">
+            <h2>0 · Are you signed in?</h2>
+            <span class="screen-id">auth</span>
+          </div>
+          <p class="hint">
+            Everything after this needs the session cookie — sign in on the
+            <a href="/account">account</a> page first.
+          </p>
+          <div class="calls" data-calls="you"></div>
+          <button type="button" data-run="you">check</button>
+          <div class="out" id="out-you"></div>
+        </section>
+
+        <!-- 1 -->
+        <section id="step-landing">
+          <div class="step-head">
+            <h2>1 · Where do you land?</h2>
+            <span class="screen-id">F-1.1 · me.md</span>
+          </div>
+          <p class="hint">
+            One call tells the app where to send you. The decision below is
+            me.md's routing table, applied in order.
+          </p>
+          <div class="calls" data-calls="landing"></div>
+          <button type="button" data-run="landing">load</button>
+          <div class="out" id="out-landing"></div>
+        </section>
+
+        <!-- 2 -->
+        <section id="step-picker">
+          <div class="step-head">
+            <h2>2 · Pick a workspace</h2>
+            <span class="screen-id">F-2</span>
+          </div>
+          <p class="hint">
+            Every workspace you belong to, across all your organizations, with
+            pending invites as a count. Opening one also remembers it on your
+            account (F-2.4), so another device lands in the same place.
+          </p>
+          <div class="calls" data-calls="picker"></div>
+          <button type="button" data-run="picker">load</button>
+          <label style="margin-top: 0.6rem">
+            search (client-side, F-2.3)
+            <input type="text" id="picker-search" placeholder="type a name" />
+          </label>
+          <div class="out" id="out-picker"></div>
+        </section>
+
+        <!-- 3 -->
+        <section id="step-invites">
+          <div class="step-head">
+            <h2>3 · Your invitations</h2>
+            <span class="screen-id">F-3 · F-2.5</span>
+          </div>
+          <p class="hint">
+            What the No-workspace screen shows, and the count on the picker.
+            Accepting one joins that workspace and opens it.
+          </p>
+          <div class="calls" data-calls="invites"></div>
+          <button type="button" data-run="invites">load</button>
+          <div class="out" id="out-invites"></div>
+        </section>
+
+        <!-- 4 -->
+        <section id="step-create">
+          <div class="step-head">
+            <h2>4 · Create a workspace</h2>
+            <span class="screen-id">F-4 · then onboarding</span>
+          </div>
+          <p class="hint">
+            You become its OWNER and take a seat. The slug is checked as you
+            type. A brand-new account then finishes onboarding by choosing a
+            starting app.
+          </p>
+          <div class="calls" data-calls="create"></div>
+          <form id="create-form">
+            <label>
+              organization
+              <select name="orgId" id="create-org">
+                <option value="">— load step 1 first —</option>
+              </select>
+            </label>
+            <div class="row">
+              <label>
+                name *
+                <input name="name" required value="Growth team" />
+              </label>
+              <label>
+                slug <span class="muted" id="slug-state"></span>
+                <input name="slug" id="create-slug" value="growth-team" />
+              </label>
+            </div>
+            <div class="row">
+              <label>
+                vertical
+                <input
+                  name="defaultVertical"
+                  id="create-vertical"
+                  list="vertical-options"
+                  value="Medicare"
+                />
+                <datalist id="vertical-options"></datalist>
+              </label>
+              <label>
+                timezone *
+                <input name="timezone" id="create-tz" required />
+              </label>
+            </div>
+            <p class="muted" style="font-size: 12px">
+              No icon field: the API's create takes name, timezone, slug and
+              vertical only.
+            </p>
+            <button type="submit">create</button>
+          </form>
+          <div class="out" id="out-create"></div>
+
+          <form id="onboarding-form" style="margin-top: 0.9rem">
+            <div class="row">
+              <label>
+                starting app
+                <select name="startingApp" id="onboarding-app"><option value="affify">affify</option><option value="journey">journey</option><option value="reach">reach</option><option value="insights">insights</option><option value="vault">vault</option><option value="connect">connect</option></select>
+              </label>
+              <label>
+                &nbsp;
+                <button type="submit">finish onboarding</button>
+              </label>
+            </div>
+          </form>
+          <div class="out" id="out-onboarding"></div>
+        </section>
+
+        <!-- 5 -->
+        <section id="step-home">
+          <div class="step-head">
+            <h2>5 · Inside the workspace — Apps home</h2>
+            <span class="screen-id">F-1.2 · F-1.3 · F-1.4</span>
+          </div>
+          <p class="hint">
+            What opening a workspace loads: the visit is recorded, then the
+            workspace, what you may do in it, the app grid, "resume where you
+            left off" and the health rollup.
+          </p>
+          <div class="calls" data-calls="home"></div>
+          <button type="button" data-run="home">open the workspace</button>
+          <div class="out" id="out-home"></div>
+        </section>
+
+        <!-- 6 -->
+        <section id="step-projects">
+          <div class="step-head">
+            <h2>6 · First project</h2>
+            <span class="screen-id">F-18</span>
+          </div>
+          <div class="calls" data-calls="projects"></div>
+          <button type="button" data-run="projects">list projects</button>
+          <form id="project-form" style="margin-top: 0.7rem">
+            <div class="row">
+              <label>
+                app
+                <select name="appId" id="project-app"><option value="affify">affify</option><option value="journey">journey</option><option value="reach">reach</option><option value="insights">insights</option><option value="vault">vault</option><option value="connect">connect</option></select>
+              </label>
+              <label>
+                name *
+                <input name="name" required value="Spring promo" />
+              </label>
+            </div>
+            <button type="submit">create project</button>
+          </form>
+          <div class="out" id="out-projects"></div>
+        </section>
+
+        <!-- 7 -->
+        <section id="step-team">
+          <div class="step-head">
+            <h2>7 · Invite your team</h2>
+            <span class="screen-id">F-6 · F-7 · F-8</span>
+          </div>
+          <p class="hint">
+            The seat meter and the member list, then the invite modal: preview
+            does the seat math before anything is sent (F-7.5). Sending mails a
+            real link — open it from the <a href="/inbox">dev inbox</a> to
+            answer as the invitee.
+          </p>
+          <div class="calls" data-calls="team"></div>
+          <button type="button" data-run="team">load seats and members</button>
+          <form id="invite-form" style="margin-top: 0.7rem">
+            <label>
+              recipients — one email per line
+              <textarea name="recipients" rows="3">teammate@example.com</textarea>
+            </label>
+            <div class="row">
+              <label>
+                role
+                <select name="wsRole" id="invite-role">
+                  <option>ADMIN</option><option selected>EDITOR</option><option>VIEWER</option>
+                </select>
+              </label>
+            </div>
+            <button type="button" id="invite-preview">1. preview seats</button>
+            <button type="submit">2. send</button>
+            <button type="button" id="invite-list">3. pending list</button>
+          </form>
+          <div class="out" id="out-team"></div>
+        </section>
+
+        <!-- 8 -->
+        <section id="step-settings">
+          <div class="step-head">
+            <h2>8 · Settings · General</h2>
+            <span class="screen-id">F-5</span>
+          </div>
+          <p class="hint">
+            Rename the workspace. The version from step 5 goes back as
+            <code>If-Match</code> — a stale one is what
+            <code>VERSION_CONFLICT</code> answers.
+          </p>
+          <div class="calls" data-calls="settings"></div>
+          <form id="settings-form">
+            <label>
+              new name
+              <input name="name" required value="Growth team (renamed)" />
+            </label>
+            <button type="submit">save</button>
+          </form>
+          <div class="out" id="out-settings"></div>
+        </section>
+
+        <section id="step-deeper">
+          <h2>Go deeper</h2>
+          <p class="hint">
+            Every module page uses the workspace this flow opened — it is
+            remembered for them.
+          </p>
+          <p class="deeper">
+            <a href="/workspace">workspace</a><a href="/members">members</a
+            ><a href="/invitations">invitations</a
+            ><a href="/projects">projects</a><a href="/ownership">ownership</a
+            ><a href="/billing">billing</a><a href="/tokens">api tokens</a
+            ><a href="/webhooks">webhooks</a><a href="/audit">audit log</a
+            ><a href="/organization">organizations</a>
+          </p>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // The caller's first organization, under either bootstrap spelling.
+      function firstOrg() {
+        return (state.bootstrap?.orgs ?? state.bootstrap?.organizations)?.[0];
+      }
+      // ---- the calls each step makes ------------------------------------
+      // [method, path template]. :workspaceId / :orgId / :inviteId fill from
+      // the journey state.
+      const CALLS = {
+        you: [["GET", "/auth/profile/get"]],
+        landing: [["GET", "/me/bootstrap"]],
+        picker: [
+          ["GET", "/me/workspaces"],
+          ["PUT", "/me/last-workspace"],
+        ],
+        invites: [
+          ["GET", "/me/invites"],
+          ["POST", "/me/invites/:inviteId/accept"],
+          ["POST", "/me/invites/:inviteId/decline"],
+        ],
+        create: [
+          ["GET", "/workspaces/slug-available"],
+          ["GET", "/verticals/suggest"],
+          ["POST", "/organizations/:orgId/workspaces"],
+          ["POST", "/me/onboarding/complete"],
+        ],
+        home: [
+          ["POST", "/workspaces/:workspaceId/visit"],
+          ["GET", "/workspaces/:workspaceId"],
+          ["GET", "/workspaces/:workspaceId/me/capabilities"],
+          ["GET", "/workspaces/:workspaceId/apps"],
+          ["GET", "/workspaces/:workspaceId/resume"],
+          ["GET", "/workspaces/:workspaceId/health"],
+        ],
+        projects: [
+          ["GET", "/workspaces/:workspaceId/projects"],
+          ["POST", "/workspaces/:workspaceId/projects"],
+        ],
+        team: [
+          ["GET", "/workspaces/:workspaceId/seats"],
+          ["GET", "/workspaces/:workspaceId/members"],
+          ["POST", "/workspaces/:workspaceId/invites/preview"],
+          ["POST", "/workspaces/:workspaceId/invites"],
+          ["GET", "/workspaces/:workspaceId/invites"],
+        ],
+        settings: [["PATCH", "/workspaces/:workspaceId"]],
+      };
+
+      // What the journey has learned so far, carried from step to step.
+      const state = {
+        profile: null,
+        profileChecked: false,
+        bootstrap: null,
+        workspace: currentWorkspace(),
+        version: null,
+        projectId: null,
+      };
+
+      // The last result of each call, so a row can be re-shown in the panel.
+      const lastResults = new Map();
+
+      const key = (method, template) => `${method} ${template}`;
+      const callId = (method, template) =>
+        key(method, template).replace(/[^a-z0-9]+/gi, "-");
+
+      // ---- the call rows ------------------------------------------------
+
+      /** One row per call: the route, and a link back to its last answer. */
+      function renderCallRows() {
+        for (const [step, calls] of Object.entries(CALLS)) {
+          const box = document.querySelector(`[data-calls="${step}"]`);
+          box.innerHTML = calls
+            .map(([method, template]) => `<div class="call">
+                <code>${method} ${escapeHtml(template)}</code>
+                <a href="#" data-show="${escapeHtml(key(method, template))}" class="muted">last response</a>
+              </div>`)
+            .join("");
+        }
+        document.querySelectorAll("[data-show]").forEach((link) =>
+          link.addEventListener("click", (event) => {
+            event.preventDefault();
+            const result = lastResults.get(link.dataset.show);
+            if (result) {
+              showResult(result);
+            }
+          }),
+        );
+      }
+
+      /**
+       * Run one call: fill the template from state, show the answer,
+       * remember it.
+       */
+      async function run(method, template, { params = {}, query = "", body, headers } = {}) {
+        const values = {
+          workspaceId: state.workspace?.id,
+          orgId: firstOrg()?.id,
+          ...params,
+        };
+        const missing = [];
+        let path = template.replace(/:([A-Za-z]+)/g, (_, name) => {
+          if (!values[name]) {
+            missing.push(name);
+          }
+          return encodeURIComponent(values[name] ?? `:${name}`);
+        });
+        if (missing.length > 0) {
+          const refusal = {
+            ok: false,
+            status: null,
+            statusName: "NOT READY",
+            error: `no ${missing.join(", ")} yet — run an earlier step first`,
+            request: { method: method, path: template, body: null },
+            raw: null,
+            ms: 0,
+          };
+          showResult(refusal);
+          return refusal;
+        }
+        if (query) {
+          path += `?${query}`;
+        }
+        const result = await api.call(
+          method,
+          path,
+          method === "GET" ? undefined : (body ?? {}),
+          headers,
+        );
+        lastResults.set(key(method, template), result);
+        showResult(result);
+        return result;
+      }
+
+      // ---- small renderers ----------------------------------------------
+
+      function kv(entries) {
+        return `<dl class="kv">${entries
+          .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${value}</dd>`)
+          .join("")}</dl>`;
+      }
+
+      const plain = (value) => escapeHtml(value ?? "—");
+
+      function refusal(result) {
+        return `<p class="bad">✗ ${escapeHtml(result.status ?? "")} ${escapeHtml(result.error ?? result.statusName)}</p>`;
+      }
+
+      function setOut(step, html) {
+        document.getElementById(`out-${step}`).innerHTML = html;
+      }
+
+      function focusStep(stepId) {
+        document.querySelectorAll("section.current").forEach((one) => one.classList.remove("current"));
+        const section = document.getElementById(stepId);
+        section?.classList.add("current");
+        section?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      function renderStateBar() {
+        const workspace = state.workspace;
+        document.getElementById("state-bar").innerHTML = `
+          <span class="muted">carried forward:</span>
+          <span class="chip">you · ${plain(state.profile?.email ?? (state.profileChecked ? "signed out" : "checking…"))}</span>
+          <span class="chip">org · ${plain(firstOrg()?.name ?? "—")}</span>
+          <span class="chip">workspace · ${plain(workspace ? `${workspace.name} (${workspace.role})` : "none")}</span>
+          <span class="chip">version · ${plain(state.version)}</span>
+          <span class="chip">project · ${plain(state.projectId)}</span>`;
+      }
+
+      /** Make a workspace the journey's — and every module page's — current one. */
+      function openWorkspace(workspace) {
+        setCurrentWorkspace(workspace);
+        state.workspace = currentWorkspace();
+        state.version = null;
+        renderStateBar();
+      }
+
+      // ---- the steps ----------------------------------------------------
+
+      const STEPS = {
+        async you() {
+          const result = await run("GET", "/auth/profile/get");
+          state.profileChecked = true;
+          if (!result.ok) {
+            state.profile = null;
+            renderStateBar();
+            setOut("you", `${refusal(result)}<p>Sign in on the <a href="/account">account</a> page, then come back.</p>`);
+            return false;
+          }
+          state.profile = result.data.user;
+          setOut("you", kv([
+            ["signed in as", plain(state.profile.email)],
+            ["role · status", `${plain(state.profile.role)} · ${plain(state.profile.status)}`],
+            ["answered by", servedByChip(result.servedBy)],
+          ]));
+          renderStateBar();
+          return true;
+        },
+
+        async landing() {
+          const result = await run("GET", "/me/bootstrap");
+          if (!result.ok) {
+            setOut("landing", refusal(result));
+            return null;
+          }
+          const data = result.data;
+          state.bootstrap = data;
+          // The design and the mock say orgs; PR #173 still sends organizations.
+          const organizations = data.orgs ?? data.organizations ?? [];
+          fillOrgSelect(organizations);
+
+          const workspaces = data.workspaces ?? [];
+          const last = workspaces.find((one) => one.id === data.lastWorkspaceId);
+          // me.md "How to route on it", first match wins.
+          let decision;
+          if (workspaces.length === 0) {
+            decision = { go: "step-invites", text: "No-workspace screen — show pending invites, offer to create one (steps 3 and 4)" };
+          } else if (data.onboardingComplete === false) {
+            decision = { go: "step-create", text: "the onboarding wizard — finish it in step 4" };
+          } else if (workspaces.length === 1) {
+            decision = { go: "step-home", text: `straight into ${workspaces[0].name}`, open: workspaces[0] };
+          } else if (last) {
+            decision = { go: "step-home", text: `the last workspace, ${last.name}`, open: last };
+          } else {
+            decision = { go: "step-picker", text: "the workspace picker (step 2)" };
+          }
+          // The design spells statuses lower-case, PR #173 upper-case.
+          const suspended = organizations.filter((org) => String(org.status).toUpperCase() !== "ACTIVE");
+
+          setOut("landing", `${kv([
+            ["user", `${plain(data.user?.email)} · ${plain(data.user?.role)}`],
+            ["organizations", organizations.map((org) => `${plain(org.name)} <span class="muted">${plain(org.orgRole)} · ${plain(org.plan)} · ${plain(org.status)}</span>`).join("<br>") || "—"],
+            ["workspaces", String(workspaces.length)],
+            ["lastWorkspaceId", plain(data.lastWorkspaceId)],
+            ["onboardingComplete", plain(String(data.onboardingComplete))],
+            ["startingApp", plain(data.startingApp)],
+            ["unread notifications", plain(data.unreadNotifications)],
+          ])}
+          ${state.profile && data.user?.email !== state.profile.email
+            ? `<p class="warn">⚠ bootstrap names ${plain(data.user?.email)}, but you are signed in as ${plain(state.profile.email)}</p>`
+            : ""}
+          ${suspended.length
+            ? `<p class="warn">⚠ ${suspended.map((org) => plain(org.name)).join(", ")} is ${plain(suspended[0].status)} — its workspaces still say readOnly:false, but every call in them answers ORGANIZATION_SUSPENDED (me.md).</p>`
+            : ""}
+          <div class="decision">→ the app sends you to <strong>${escapeHtml(decision.text)}</strong>
+            <button type="button" id="follow-decision">follow</button></div>`);
+
+          document.getElementById("follow-decision").addEventListener("click", async () => {
+            if (decision.open) {
+              openWorkspace(decision.open);
+              focusStep(decision.go);
+              await STEPS.home();
+            } else {
+              focusStep(decision.go);
+            }
+          });
+          return decision;
+        },
+
+        async picker() {
+          const result = await run("GET", "/me/workspaces");
+          if (!result.ok) {
+            setOut("picker", refusal(result));
+            return [];
+          }
+          const workspaces = Array.isArray(result.data) ? result.data : (result.data?.items ?? []);
+          renderPickerTable(workspaces);
+          return workspaces;
+        },
+
+        async invites() {
+          const result = await run("GET", "/me/invites");
+          if (!result.ok) {
+            setOut("invites", refusal(result));
+            return [];
+          }
+          const invites = Array.isArray(result.data) ? result.data : (result.data?.items ?? []);
+          if (invites.length === 0) {
+            setOut("invites", `<p class="muted">no pending invitations — create a workspace in step 4</p>`);
+            return [];
+          }
+          setOut("invites", `<table>
+            <tr><th>workspace</th><th>invited by</th><th>role</th><th>expires</th><th></th></tr>
+            ${invites.map((invite) => `<tr>
+              <td>${plain(invite.workspaceName)}</td>
+              <td>${plain(invite.invitedBy?.name)}</td>
+              <td>${plain(invite.role)}</td>
+              <td>${plain(invite.expiresAt?.slice(0, 10))}</td>
+              <td><button type="button" data-accept="${escapeHtml(invite.inviteId)}" data-name="${escapeHtml(invite.workspaceName)}">accept</button>
+                  <button type="button" data-decline="${escapeHtml(invite.inviteId)}">decline</button></td>
+            </tr>`).join("")}
+          </table>`);
+          document.querySelectorAll("[data-accept]").forEach((button) =>
+            button.addEventListener("click", async () => {
+              const accepted = await run("POST", "/me/invites/:inviteId/accept", { params: { inviteId: button.dataset.accept } });
+              if (accepted.ok) {
+                openWorkspace({ id: accepted.data.workspaceId, orgId: null, name: button.dataset.name, role: accepted.data.role });
+                setOut("invites", `<p class="good">✓ joined ${plain(button.dataset.name)} as ${plain(accepted.data.role)} — opening it</p>`);
+                focusStep("step-home");
+                await STEPS.home();
+              } else {
+                setOut("invites", refusal(accepted));
+              }
+            }),
+          );
+          document.querySelectorAll("[data-decline]").forEach((button) =>
+            button.addEventListener("click", async () => {
+              const declined = await run("POST", "/me/invites/:inviteId/decline", { params: { inviteId: button.dataset.decline } });
+              setOut("invites", declined.ok ? `<p class="good">✓ declined</p>` : refusal(declined));
+            }),
+          );
+          return invites;
+        },
+
+        async home() {
+          if (!state.workspace) {
+            setOut("home", `<p class="warn">no workspace yet — open one in step 2, accept an invite in step 3, or create one in step 4</p>`);
+            return false;
+          }
+          const lines = [];
+          const visit = await run("POST", "/workspaces/:workspaceId/visit", { body: {} });
+          lines.push(["visit recorded", visit.ok ? "✓" : refusal(visit)]);
+
+          const detail = await run("GET", "/workspaces/:workspaceId");
+          if (detail.ok) {
+            const ws = detail.data;
+            state.version = ws.version;
+            lines.push(["workspace", `${plain(ws.name)} <span class="muted">/${plain(ws.slug)} · ${plain(ws.timezone)}</span>`]);
+            lines.push(["status", `${plain(ws.status)}${ws.readOnly ? ' <span class="warn">read-only</span>' : ""}`]);
+            lines.push(["counts", `${plain(ws.counts?.members)} members · ${plain(ws.counts?.projects)} projects · ${plain(ws.counts?.pendingInvites)} pending invites`]);
+            lines.push(["version", plain(ws.version)]);
+            if (ws.id && ws.id !== state.workspace.id) {
+              lines.push(["⚠ id", `<span class="warn">asked for ${plain(state.workspace.id)}, the API answered ${plain(ws.id)}</span>`]);
+            }
+            if (ws.name && state.workspace.name && ws.name !== state.workspace.name) {
+              lines.push(["⚠ name", `<span class="warn">the list called it ${plain(state.workspace.name)}, this route calls it ${plain(ws.name)}</span>`]);
+            }
+          } else {
+            lines.push(["workspace", refusal(detail)]);
+          }
+
+          const caps = await run("GET", "/workspaces/:workspaceId/me/capabilities");
+          lines.push(["you may", caps.ok
+            ? `${(caps.data.workspace ?? []).map((one) => `<span class="chip">${plain(one)}</span>`).join(" ")}<br><span class="muted">projects reachable: ${plain(JSON.stringify(caps.data.reachableProjectIds))}</span>`
+            : refusal(caps)]);
+
+          const apps = await run("GET", "/workspaces/:workspaceId/apps");
+          if (apps.ok) {
+            fillAppSelects(apps.data);
+          }
+          lines.push(["apps", apps.ok
+            ? (apps.data ?? []).map((app) => `${plain(app.name)} <span class="muted">${plain(app.state)}${app.requiredPlan ? ` · needs ${plain(app.requiredPlan)}` : ""}${app.requiredRole ? ` · ${plain(app.requiredRole)} only` : ""}</span>`).join(" · ")
+            : refusal(apps)]);
+
+          const resume = await run("GET", "/workspaces/:workspaceId/resume");
+          lines.push(["resume", resume.ok
+            ? ((resume.data ?? []).map((item) => `${plain(item.label)} <span class="muted">${plain(item.kind)}</span>`).join("<br>") || '<span class="muted">nothing yet</span>')
+            : refusal(resume)]);
+
+          const health = await run("GET", "/workspaces/:workspaceId/health");
+          lines.push(["health", health.ok
+            ? Object.entries(health.data ?? {}).map(([name, counts]) => `${plain(name)} <span class="muted">${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(" · ")}</span>`).join("<br>")
+            : refusal(health)]);
+
+          setOut("home", kv(lines));
+          renderStateBar();
+          return detail.ok;
+        },
+
+        async projects() {
+          const result = await run("GET", "/workspaces/:workspaceId/projects");
+          if (!result.ok) {
+            setOut("projects", refusal(result));
+            return;
+          }
+          const items = result.data?.items ?? (Array.isArray(result.data) ? result.data : []);
+          setOut("projects", items.length
+            ? `<table><tr><th>project</th><th>app</th><th>status</th></tr>${items
+                .map((one) => `<tr><td>${plain(one.name)}</td><td>${plain(one.appId)}</td><td>${plain(one.status)}${one.pinned ? " · pinned" : ""}</td></tr>`)
+                .join("")}</table>`
+            : `<p class="muted">no projects yet — create the first one</p>`);
+        },
+
+        async team() {
+          const seats = await run("GET", "/workspaces/:workspaceId/seats");
+          const members = await run("GET", "/workspaces/:workspaceId/members");
+          const items = members.data?.items ?? [];
+          setOut("team", `${seats.ok
+            ? kv([
+                ["seats", `${plain(seats.data.seatsUsed)} used of ${plain(seats.data.seatsIncluded + (seats.data.seatsExtra ?? 0))} · ${plain(seats.data.seatsFree)} free · ${plain(seats.data.seatsPending)} pending`],
+                ["plan", `${plain(seats.data.plan)} · billable: ${plain((seats.data.billableRoles ?? []).join(", "))}`],
+                ["by role", (seats.data.byRole ?? []).map((one) => `${plain(one.role)} ${plain(one.count)}`).join(" · ")],
+              ])
+            : refusal(seats)}
+            ${members.ok
+              ? `<table><tr><th>member</th><th>role</th><th>status</th><th>presence</th></tr>${items
+                  .map((one) => `<tr><td>${plain(one.name)} <span class="muted">${plain(one.email)}</span></td><td>${plain(one.wsRole)}</td><td>${plain(one.status)}</td><td>${plain(one.presence)}</td></tr>`)
+                  .join("")}</table>${members.data?.nextCursor ? '<p class="muted">more on the next page — the members page pages through them</p>' : ""}`
+              : refusal(members)}`);
+        },
+      };
+
+      // ---- step helpers that need the page's controls -------------------
+
+      function fillOrgSelect(orgs) {
+        const select = document.getElementById("create-org");
+        select.innerHTML = orgs.length
+          ? orgs.map((org) => `<option value="${escapeHtml(org.id)}">${escapeHtml(org.name)} · ${escapeHtml(org.orgRole)}</option>`).join("")
+          : `<option value="">— you belong to no organization —</option>`;
+      }
+
+      function fillAppSelects(apps) {
+        const usable = apps.filter((app) => app.state === "ACTIVE");
+        const options = (usable.length ? usable : apps)
+          .map((app) => `<option value="${escapeHtml(app.key)}">${escapeHtml(app.name)} · ${escapeHtml(app.state)}</option>`)
+          .join("");
+        document.getElementById("project-app").innerHTML = options;
+        document.getElementById("onboarding-app").innerHTML = options;
+      }
+
+      function renderPickerTable(workspaces) {
+        const filter = document.getElementById("picker-search").value.trim().toLowerCase();
+        const shown = workspaces.filter((one) => !filter || one.name.toLowerCase().includes(filter));
+        setOut("picker", workspaces.length === 0
+          ? `<p class="muted">no workspace reachable — the No-workspace screen (step 3)</p>`
+          : `<table>
+              <tr><th>workspace</th><th>role</th><th>projects · members</th><th>last visit</th><th></th></tr>
+              ${shown.map((one) => `<tr>
+                <td>${plain(one.name)} <span class="muted">${plain(one.defaultVertical)}</span>${one.readOnly ? ' <span class="warn">read-only</span>' : ""}</td>
+                <td>${plain(one.role)}</td>
+                <td>${plain(one.counts?.projects)} · ${plain(one.counts?.members)}</td>
+                <td>${plain(one.lastVisit?.name)} <span class="muted">${plain(one.lastVisit?.at?.slice(0, 16).replace("T", " "))}</span></td>
+                <td><button type="button" data-open="${escapeHtml(one.id)}">open</button></td>
+              </tr>`).join("")}
+            </table>
+            <p class="muted">${shown.length} of ${workspaces.length} shown · pending invites: ${plain(workspaces.reduce((sum, one) => sum + (one.counts?.pendingInvites ?? 0), 0))} across these workspaces</p>`);
+        document.querySelectorAll("[data-open]").forEach((button) =>
+          button.addEventListener("click", async () => {
+            const chosen = workspaces.find((one) => one.id === button.dataset.open);
+            openWorkspace(chosen);
+            // F-2.4: remembered on the account, not in a cookie.
+            const remembered = await run("PUT", "/me/last-workspace", { body: { workspaceId: chosen.id } });
+            if (!remembered.ok) {
+              setOut("picker", refusal(remembered));
+              return;
+            }
+            focusStep("step-home");
+            await STEPS.home();
+          }),
+        );
+        document.getElementById("picker-search").oninput = () => renderPickerTable(workspaces);
+      }
+
+      // ---- forms --------------------------------------------------------
+
+      let slugTimer = null;
+      document.getElementById("create-slug").addEventListener("input", (event) => {
+        clearTimeout(slugTimer);
+        const slug = event.target.value.trim();
+        const label = document.getElementById("slug-state");
+        if (!slug) {
+          label.textContent = "";
+          return;
+        }
+        label.textContent = "checking…";
+        slugTimer = setTimeout(async () => {
+          const result = await run("GET", "/workspaces/slug-available", { query: `slug=${encodeURIComponent(slug)}` });
+          label.className = result.ok && result.data.available ? "good" : "warn";
+          label.textContent = result.ok
+            ? (result.data.available ? "✓ free" : `✗ taken${result.data.suggestion ? ` — try ${result.data.suggestion}` : ""}`)
+            : `✗ ${result.error}`;
+        }, 400);
+      });
+
+      let verticalTimer = null;
+      document.getElementById("create-vertical").addEventListener("input", (event) => {
+        clearTimeout(verticalTimer);
+        const q = event.target.value.trim();
+        if (q.length < 2) {
+          return;
+        }
+        verticalTimer = setTimeout(async () => {
+          const result = await run("GET", "/verticals/suggest", { query: `q=${encodeURIComponent(q)}` });
+          if (result.ok) {
+            document.getElementById("vertical-options").innerHTML = (result.data ?? [])
+              .map((one) => `<option value="${escapeHtml(one)}"></option>`)
+              .join("");
+          }
+        }, 300);
+      });
+
+      onSubmit("create-form", async (values) => {
+        // The organization list comes from step 1; load it if it is not here yet.
+        if (state.bootstrap === null) {
+          await STEPS.landing();
+        }
+        const orgId =
+          document.getElementById("create-org").value ||
+          firstOrg()?.id;
+        const body = { name: values.name, timezone: values.timezone };
+        if (values.slug) body.slug = values.slug;
+        if (values.defaultVertical) body.defaultVertical = values.defaultVertical;
+        const result = await run("POST", "/organizations/:orgId/workspaces", { params: { orgId: orgId }, body: body });
+        if (result.ok) {
+          openWorkspace({ id: result.data.workspaceId, orgId: orgId, name: values.name, role: result.data.role });
+          setOut("create", `<p class="good">✓ created ${plain(values.name)} <span class="muted">/${plain(result.data.slug)} · you are ${plain(result.data.role)}</span></p>
+            ${state.bootstrap?.onboardingComplete === false
+              ? "<p>This account has not finished onboarding — pick a starting app below.</p>"
+              : '<p>Next: <a href="#step-home">open it (step 5)</a>.</p>'}`);
+        } else {
+          setOut("create", refusal(result));
+        }
+        return undefined;
+      });
+
+      onSubmit("onboarding-form", async (values) => {
+        const result = await run("POST", "/me/onboarding/complete", {
+          body: { workspaceId: state.workspace?.id, startingApp: values.startingApp },
+        });
+        setOut("onboarding", result.ok
+          ? `<p class="good">✓ onboarding finished — the app now opens ${plain(values.startingApp)}</p>`
+          : refusal(result));
+        if (result.ok) {
+          focusStep("step-home");
+          await STEPS.home();
+        }
+        return undefined;
+      });
+
+      onSubmit("project-form", async (values) => {
+        const result = await run("POST", "/workspaces/:workspaceId/projects", { body: { appId: values.appId, name: values.name } });
+        if (result.ok) {
+          state.projectId = result.data.projectId;
+          renderStateBar();
+          setOut("projects", `<p class="good">✓ created ${plain(result.data.name)} in ${plain(result.data.appId)} <span class="muted">${plain(result.data.projectId)}</span></p>`);
+        } else {
+          setOut("projects", refusal(result));
+        }
+        return undefined;
+      });
+
+      function inviteBody(form) {
+        const values = Object.fromEntries(new FormData(form).entries());
+        return {
+          recipients: values.recipients.split(/[\s,;]+/).map((one) => one.trim()).filter(Boolean),
+          wsRole: values.wsRole,
+        };
+      }
+
+      document.getElementById("invite-preview").addEventListener("click", async () => {
+        const { recipients, wsRole } = inviteBody(document.getElementById("invite-form"));
+        const result = await run("POST", "/workspaces/:workspaceId/invites/preview", { body: { recipients, wsRole } });
+        setOut("team", result.ok
+          ? kv([
+              ["will invite", plain((result.data.valid ?? []).join(", ") || "nobody")],
+              ["not an address", plain((result.data.invalid ?? []).map((one) => `${one.email} (${one.reason})`).join(", ") || "—")],
+              ["already a member", plain((result.data.alreadyMember ?? []).join(", ") || "—")],
+              ["already invited", plain((result.data.alreadyInvited ?? []).join(", ") || "—")],
+              ["seats", result.data.seats?.shortBy > 0
+                ? `<span class="warn">short by ${plain(result.data.seats.shortBy)} — the modal routes to "Add seats"</span>`
+                : `<span class="good">${plain(result.data.seats?.free)} free, this uses ${plain(result.data.seats?.wouldConsume)}</span>`],
+            ])
+          : refusal(result));
+      });
+
+      onSubmit("invite-form", async (values, form) => {
+        const result = await run("POST", "/workspaces/:workspaceId/invites", { body: inviteBody(form) });
+        setOut("team", result.ok
+          ? `<p class="good">✓ sent ${plain((result.data.invites ?? []).map((one) => `${one.email} as ${one.wsRole}`).join(", ") || "nothing new")}</p>
+             ${(result.data.alreadyInvited ?? []).length ? `<p class="muted">already invited: ${plain(result.data.alreadyInvited.join(", "))}</p>` : ""}`
+          : refusal(result));
+        return undefined;
+      });
+
+      document.getElementById("invite-list").addEventListener("click", async () => {
+        const result = await run("GET", "/workspaces/:workspaceId/invites");
+        const items = result.data?.items ?? [];
+        setOut("team", result.ok
+          ? `<table><tr><th>email</th><th>role</th><th>status</th><th>expires</th></tr>${items
+              .map((one) => `<tr><td>${plain(one.email)}</td><td>${plain(one.wsRole)}</td><td>${plain(one.status)}${one.isExpired ? ' <span class="warn">expired</span>' : ""}</td><td>${plain(one.expiresAt?.slice(0, 10))}</td></tr>`)
+              .join("")}</table>`
+          : refusal(result));
+      });
+
+      onSubmit("settings-form", async (values) => {
+        if (state.version === null) {
+          setOut("settings", `<p class="warn">open the workspace in step 5 first — its version goes back as If-Match</p>`);
+          return undefined;
+        }
+        const result = await run("PATCH", "/workspaces/:workspaceId", {
+          body: { name: values.name },
+          headers: { "If-Match": String(state.version) },
+        });
+        if (result.ok) {
+          state.version = result.data.version;
+          state.workspace = { ...state.workspace, name: result.data.name };
+          setCurrentWorkspace(state.workspace);
+          renderStateBar();
+        }
+        setOut("settings", result.ok
+          ? `<p class="good">✓ renamed to ${plain(result.data.name)} · version now ${plain(result.data.version)}</p>`
+          : refusal(result));
+        return undefined;
+      });
+
+      // ---- wiring -------------------------------------------------------
+
+      document.querySelectorAll("[data-run]").forEach((button) =>
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          try {
+            await STEPS[button.dataset.run]();
+          } finally {
+            button.disabled = false;
+          }
+        }),
+      );
+
+      // The default path a returning user takes, end to end.
+      document.getElementById("run-journey").addEventListener("click", async (event) => {
+        const button = event.target;
+        button.disabled = true;
+        try {
+          if (!(await STEPS.you())) {
+            focusStep("step-you");
+            return;
+          }
+          const decision = await STEPS.landing();
+          if (decision?.open) {
+            openWorkspace(decision.open);
+          } else {
+            const workspaces = await STEPS.picker();
+            if (workspaces[0]) {
+              openWorkspace(workspaces[0]);
+            } else {
+              await STEPS.invites();
+              focusStep("step-invites");
+              return;
+            }
+          }
+          await STEPS.home();
+          await STEPS.projects();
+          await STEPS.team();
+          focusStep("step-home");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      (async () => {
+        document.getElementById("create-tz").value =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+        renderStateBar();
+        renderCallRows();
+        // Signed in: load the landing too, so step 4's organization list is ready.
+        if (await STEPS.you()) {
+          await STEPS.landing();
+        }
+        document.body.dataset.ready = "true";
+      })();
+    </script>
+  </body>
+</html>

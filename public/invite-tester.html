@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — workspace invite (tester)</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      table.kv {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      table.kv th,
+      table.kv td {
+        text-align: left;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      table.kv th {
+        width: 9rem;
+        color: var(--muted);
+        font: 500 12px var(--mono);
+      }
+      .next-step {
+        margin: 0.7rem 0 0;
+        padding: 0.5rem 0.7rem;
+        border-left: 3px solid var(--accent);
+        background: var(--surface-2);
+      }
+      .refusal {
+        color: var(--refused);
+        margin: 0.6rem 0 0;
+      }
+      .joined {
+        color: var(--ok);
+        margin: 0.6rem 0 0;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.4rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <p class="note">
+          The emailed link is <code>/invite#&lt;token&gt;</code>, which opens the
+          app's invite page. This tester takes the same token at
+          <code>/invite-tester#&lt;token&gt;</code>. The token sits after
+          <strong>#</strong> so the browser never sends it in a URL; this page
+          reads it from <code>location.hash</code> and posts it in a body.
+          A new token (resend, "copy link") kills the old one.
+        </p>
+
+        <section>
+          <h2>The invitation — POST /invites/lookup</h2>
+          <p class="hint">
+            Public and changes nothing. Looked up as soon as the page opens.
+          </p>
+          <form id="lookup-form" class="row">
+            <label>
+              token
+              <input type="text" name="token" id="token" required />
+            </label>
+            <button type="submit">look up</button>
+          </form>
+          <div id="lookup-summary"><p class="muted">no token yet</p></div>
+        </section>
+
+        <section>
+          <h2>Accept as a new account — POST /invites/accept</h2>
+          <p class="hint">
+            Only when no account has the invited address. Creates it already
+            verified, joins the workspace and signs you in. Signed in as anyone
+            else, it must be refused INVITE_EMAIL_MISMATCH.
+          </p>
+          <form id="signup-form">
+            <div class="row">
+              <label>
+                firstName
+                <input type="text" name="firstName" id="signup-first" />
+              </label>
+              <label>
+                lastName
+                <input type="text" name="lastName" id="signup-last" />
+              </label>
+            </div>
+            <label>
+              password — 10 to 72 bytes
+              <input type="password" name="password" id="signup-password" />
+            </label>
+            <button type="submit">create account and join</button>
+          </form>
+        </section>
+
+        <section>
+          <h2>Accept or decline as an existing account</h2>
+          <p class="hint">
+            You must be signed in as exactly the invited address. Accepting
+            signed out must be refused SIGN_IN_REQUIRED, and nothing is spent.
+          </p>
+          <form id="signin-form">
+            <div class="row">
+              <label>
+                email — filled from the lookup
+                <input type="text" name="email" id="signin-email" required />
+              </label>
+              <label>
+                password
+                <input
+                  type="password"
+                  name="password"
+                  id="signin-password"
+                  required
+                />
+              </label>
+            </div>
+            <div class="actions">
+              <button type="submit">sign in — POST /auth/session/login</button>
+              <button type="button" id="signout-btn">sign out</button>
+            </div>
+          </form>
+          <div id="challenge-banner" class="note" hidden></div>
+          <div class="actions" style="margin-top: 0.9rem">
+            <button type="button" id="accept-btn">
+              accept — POST /invites/accept
+            </button>
+            <button type="button" id="decline-btn">
+              decline — POST /invites/decline
+            </button>
+          </div>
+        </section>
+
+        <div id="outcome"></div>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      function currentToken() {
+        return document.getElementById("token").value.trim();
+      }
+
+      function refusalHtml(result) {
+        const details =
+          result.errorDetails && Object.keys(result.errorDetails).length
+            ? `<pre>${escapeHtml(
+                JSON.stringify(result.errorDetails, null, 2),
+              )}</pre>`
+            : "";
+        return `<p class="refusal">refused: ${escapeHtml(
+          result.error ?? result.statusName,
+        )}</p>${details}`;
+      }
+
+      function renderSummary(invite) {
+        const nextStep = invite.requiresSignup
+          ? `No account has ${escapeHtml(invite.email)} yet: use
+             "accept as a new account".`
+          : `An account already has ${escapeHtml(invite.email)}: sign in as
+             it, then accept or decline.`;
+        return `<table class="kv">
+            <tr><th>workspace</th><td id="summary-workspace">${escapeHtml(
+              invite.workspaceName ?? "—",
+            )}</td></tr>
+            <tr><th>organization</th><td>${escapeHtml(
+              invite.orgName ?? "—",
+            )}</td></tr>
+            <tr><th>invited by</th><td>${escapeHtml(
+              invite.inviterName ?? "—",
+            )}</td></tr>
+            <tr><th>role</th><td>${escapeHtml(invite.wsRole)}</td></tr>
+            <tr><th>for</th><td id="summary-email">${escapeHtml(
+              invite.email,
+            )}</td></tr>
+            <tr><th>expires</th><td>${escapeHtml(
+              new Date(invite.expiresAt).toLocaleString(),
+            )}</td></tr>
+            <tr><th>requiresSignup</th><td id="summary-signup">${escapeHtml(
+              invite.requiresSignup,
+            )}</td></tr>
+          </table>
+          <p class="next-step">${nextStep}</p>`;
+      }
+
+      async function lookup() {
+        const summary = document.getElementById("lookup-summary");
+        const result = await api.post("/invites/lookup", {
+          token: currentToken(),
+        });
+        summary.innerHTML = result.ok
+          ? renderSummary(result.data)
+          : refusalHtml(result);
+        if (result.ok) {
+          document.getElementById("signin-email").value = result.data.email;
+        }
+        return result;
+      }
+
+      /**
+       * Say what an accept or decline did, with the next step on a refusal.
+       *
+       * @param {object} result
+       * @returns {void}
+       */
+      function renderOutcome(result) {
+        const outcome = document.getElementById("outcome");
+        if (!result.ok) {
+          const hints = {
+            SIGN_IN_REQUIRED: "Sign in as the invited address, then accept.",
+            INVITE_EMAIL_MISMATCH:
+              "You are signed in as someone else: sign out first.",
+          };
+          outcome.innerHTML = `<section>${refusalHtml(result)}${
+            hints[result.errorCode]
+              ? `<p class="muted">${escapeHtml(hints[result.errorCode])}</p>`
+              : ""
+          }</section>`;
+          return;
+        }
+        // An accept always answers the workspace; a decline answers {} by
+        // design (PR #173 sends { declined: true }).
+        outcome.innerHTML = result.data.workspaceId === undefined
+          ? '<section><p class="joined">declined — this link no longer works</p></section>'
+          : `<section><p class="joined">joined workspace
+              <code>${escapeHtml(result.data.workspaceId)}</code> as
+              <strong>${escapeHtml(result.data.role)}</strong></p>
+              <p class="muted">see it on <a href="/members">members</a> or
+              <a href="/invitations">invitations</a></p></section>`;
+      }
+
+      onSubmit("lookup-form", () => lookup());
+
+      onSubmit("signup-form", async (values) => {
+        const result = await api.post("/invites/accept", {
+          token: currentToken(),
+          firstName: values.firstName,
+          lastName: values.lastName,
+          password: values.password,
+        });
+        renderOutcome(result);
+        return result;
+      });
+
+      onSubmit("signin-form", async (values) => {
+        const result = await api.post("/auth/session/login", {
+          email: values.email,
+          password: values.password,
+        });
+        noteIfChallenged(result);
+        return result;
+      });
+
+      document
+        .getElementById("signout-btn")
+        .addEventListener("click", async () => {
+          showResult(await api.post("/auth/session/logout"));
+          await refreshIdentity();
+        });
+
+      document
+        .getElementById("accept-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/invites/accept", {
+            token: currentToken(),
+          });
+          renderOutcome(result);
+          showResult(result);
+          await refreshIdentity();
+        });
+
+      document
+        .getElementById("decline-btn")
+        .addEventListener("click", async () => {
+          const result = await api.post("/invites/decline", {
+            token: currentToken(),
+          });
+          renderOutcome(result);
+          showResult(result);
+        });
+
+      /**
+       * Take the token from the link's fragment and look it up.
+       *
+       * @returns {void}
+       */
+      function readHash() {
+        const token = location.hash.slice(1);
+        if (token === "") {
+          return;
+        }
+        document.getElementById("token").value = token;
+        lookup().then(showResult);
+      }
+
+      window.addEventListener("hashchange", readHash);
+      readHash();
+    </script>
+  </body>
+</html>

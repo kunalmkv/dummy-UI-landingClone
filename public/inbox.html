@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — dev inbox</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      a {
+        color: var(--accent);
+      }
+      /* The mail table needs more room than a form does. */
+      main {
+        grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+      }
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        margin-top: 1rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.55rem 0.5rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+        font-size: 12px;
+      }
+      td.mail {
+        width: 38%;
+        overflow-wrap: anywhere;
+      }
+      td.mail .badge {
+        display: inline-block;
+        margin-bottom: 0.3rem;
+      }
+      .code {
+        margin: 0 0 0.5rem;
+        font: 700 22px var(--mono);
+        letter-spacing: 0.18em;
+      }
+      dl.facts {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 0.15rem 0.7rem;
+        margin: 0 0 0.5rem;
+        font-size: 12.5px;
+      }
+      dl.facts dt {
+        color: var(--muted);
+      }
+      dl.facts dd {
+        margin: 0;
+        word-break: break-word;
+      }
+      .link-line {
+        margin-bottom: 0.4rem;
+      }
+      .link-line .raw {
+        font: 11px var(--mono);
+        color: var(--muted);
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <p class="note">
+          Reads the <code>emails</code> outbox straight from Mongo through
+          <code>GET /dev/outbox</code> on this server — not a backend endpoint,
+          and deliberately so: it hands out live tokens for any address. It
+          exists only in this package, which is never deployed.
+        </p>
+
+        <section>
+          <h2>Dev inbox</h2>
+          <p class="hint">
+            Newest first, 40 max. A row exists as soon as the request succeeds —
+            it does not wait for the mail to be sent. Every link opens in this
+            harness.
+          </p>
+          <form id="filter-form" class="row">
+            <label>
+              filter by address (substring)
+              <input type="text" name="email" id="filter-email" />
+            </label>
+            <button type="submit">filter</button>
+            <button type="button" id="refresh-btn">refresh</button>
+          </form>
+          <div id="rows">
+            <p class="muted">loading…</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // The button text for each link a payload carries.
+      const LINK_LABELS = {
+        verificationLink: "verify the address →",
+        resetLink: "reset the password →",
+        magicLink: "sign in with the link →",
+        transferLink: "review the ownership offer →",
+        appLink: "open the app →",
+      };
+
+      function linkLabel(type, field) {
+        if (field === "inviteLink") {
+          return type === "INVITE"
+            ? "accept the organization invite →"
+            : "open the workspace invite →";
+        }
+        return LINK_LABELS[field] ?? `open ${field} →`;
+      }
+
+      // Re-rooted on this page's origin: a link to localhost:3001 opened from
+      // 127.0.0.1:3001 would be another site, and the cookie would not follow.
+      function harnessHref(link, row) {
+        const url = new URL(link, location.origin);
+        // The verify page takes the address too, so its code path works as well.
+        if (row.type === "VERIFY") {
+          url.searchParams.set("email", row.to);
+        }
+        return location.origin + url.pathname + url.search + url.hash;
+      }
+
+      // The emailed paths open the app; each has a bare API tester beside it.
+      const TESTER_PATHS = [
+        "/invite",
+        "/verify-email",
+        "/reset-password",
+        "/magic-link",
+        "/accept-invite",
+      ];
+
+      function testerHref(link, row) {
+        const url = new URL(harnessHref(link, row));
+        return TESTER_PATHS.includes(url.pathname)
+          ? location.origin + url.pathname + "-tester" + url.search + url.hash
+          : null;
+      }
+
+      function showValue(value) {
+        if (value === null || value === undefined || value === "") {
+          return "—";
+        }
+        return typeof value === "object" ? JSON.stringify(value) : value;
+      }
+
+      // Every payload renders the same way: the code big, the links as
+      // buttons, and everything else as name and value.
+      function mailContent(row) {
+        const entries = Object.entries(row.payload ?? {});
+        const links = entries.filter(
+          ([key, value]) => key.endsWith("Link") && typeof value === "string",
+        );
+        const facts = entries.filter(
+          ([key]) => !key.endsWith("Link") && key !== "code",
+        );
+        return `
+          ${
+            row.payload?.code
+              ? `<p class="code">${escapeHtml(row.payload.code)}</p>`
+              : ""
+          }
+          ${
+            facts.length
+              ? `<dl class="facts">${facts
+                  .map(
+                    ([key, value]) =>
+                      `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(
+                        showValue(value),
+                      )}</dd>`,
+                  )
+                  .join("")}</dl>`
+              : ""
+          }
+          ${links
+            .map(
+              ([key, link]) => `<div class="link-line">
+                <a href="${escapeHtml(harnessHref(link, row))}"
+                  data-link="${escapeHtml(key)}">${escapeHtml(
+                    linkLabel(row.type, key),
+                  )}</a>
+                ${
+                  testerHref(link, row)
+                    ? `<a class="muted" data-tester-link="${escapeHtml(key)}" href="${escapeHtml(
+                        testerHref(link, row),
+                      )}">tester →</a>`
+                    : ""
+                }
+                <div class="raw">${escapeHtml(link)}</div>
+              </div>`,
+            )
+            .join("")}
+          ${
+            entries.length === 0
+              ? '<span class="muted">empty payload</span>'
+              : ""
+          }`;
+      }
+
+      function outboxRow(row) {
+        return `<tr data-type="${escapeHtml(row.type)}" data-to="${escapeHtml(
+          row.to,
+        )}">
+          <td class="mail">
+            <span class="badge">${escapeHtml(row.type)}</span>
+            <div>${escapeHtml(row.to)}</div>
+            <div class="muted">${escapeHtml(
+              new Date(row.createdAt).toLocaleString(),
+            )} · ${escapeHtml(row.status)}${
+              row.attempts ? ` · ${escapeHtml(row.attempts)} attempts` : ""
+            }</div>
+            ${
+              row.lastError
+                ? `<p class="error-line">${escapeHtml(row.lastError)}</p>`
+                : ""
+            }
+          </td>
+          <td>${mailContent(row)}</td>
+        </tr>`;
+      }
+
+      function renderRows(result) {
+        const container = document.getElementById("rows");
+        if (!result.ok) {
+          container.innerHTML = `<p class="error-line">${escapeHtml(
+            result.error,
+          )}</p>`;
+          return;
+        }
+        container.innerHTML = result.data.length
+          ? `<table>
+              <thead><tr><th>mail</th><th>what it carries</th></tr></thead>
+              <tbody>${result.data.map(outboxRow).join("")}</tbody>
+            </table>`
+          : '<p class="muted">nothing queued</p>';
+      }
+
+      // The outbox is on this server, not the API, so api.js cannot read it.
+      // Shaped like an api.call result so the panel can show it all the same.
+      async function readOutbox(path) {
+        const startedAt = performance.now();
+        const request = { method: "GET", path: path, body: null, headers: {} };
+        try {
+          const response = await fetch(path);
+          const rows = await response.json();
+          const ok = Array.isArray(rows);
+          return {
+            ok: ok,
+            status: response.status,
+            statusName: ok ? `OUTBOX · ${rows.length} rows` : "OUTBOX ERROR",
+            data: ok ? rows : null,
+            error: ok ? null : String(rows.error ?? "unexpected answer"),
+            request: request,
+            raw: rows,
+            httpStatus: null,
+            ms: Math.round(performance.now() - startedAt),
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            status: null,
+            statusName: "NO RESPONSE",
+            data: null,
+            error: `${error.message} — is server.js running?`,
+            request: request,
+            raw: null,
+            httpStatus: null,
+            ms: Math.round(performance.now() - startedAt),
+          };
+        }
+      }
+
+      async function loadOutbox() {
+        const email = document.getElementById("filter-email").value.trim();
+        const query = email ? `?email=${encodeURIComponent(email)}` : "";
+        // Kept in the address bar, so a reload or a shared link keeps the filter.
+        history.replaceState(null, "", `/inbox${query}`);
+        const result = await readOutbox(`/dev/outbox${query}`);
+        showResult(result);
+        renderRows(result);
+      }
+
+      document.getElementById("filter-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        loadOutbox();
+      });
+      document
+        .getElementById("refresh-btn")
+        .addEventListener("click", loadOutbox);
+
+      (async () => {
+        document.getElementById("filter-email").value =
+          new URLSearchParams(location.search).get("email") ?? "";
+        await loadOutbox();
+        document.body.dataset.ready = "true";
+      })();
+    </script>
+  </body>
+</html>

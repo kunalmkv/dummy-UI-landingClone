@@ -1,0 +1,18 @@
+{
+  "name": "chakra-dummy-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Manual test harness for the chakra API \u2014 auth and the workspace layer. Not shipped, not the real frontend.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "start:hybrid": "PORT=3002 ROUTING=hybrid MOCK_TARGET=http://localhost:4003 API_TARGET=http://localhost:3000 node server.js",
+    "start:mock": "PORT=3002 ROUTING=mock MOCK_TARGET=http://localhost:4003 API_TARGET=http://localhost:4003 node server.js"
+  },
+  "dependencies": {
+    "mongodb": "^6.10.0"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

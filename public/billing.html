@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chakra harness — billing</title>
+    <link rel="stylesheet" href="/app.css" />
+    <style>
+      main {
+        max-width: 1400px;
+        grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      }
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      main > div > section + section {
+        margin-top: 1.25rem;
+      }
+      #workspace-picker {
+        margin-bottom: 1rem;
+      }
+      input[type="number"] {
+        width: 100%;
+        margin-top: 0.2rem;
+        padding: 0.45rem 0.55rem;
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        font: 13px var(--mono);
+      }
+      h3 {
+        margin: 1rem 0 0.2rem;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        margin-top: 0.6rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.35rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      table.kv th {
+        width: 11rem;
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      tr.current td {
+        background: var(--surface-2);
+      }
+      td.row-actions button {
+        padding: 0.2rem 0.45rem;
+        font-size: 12px;
+      }
+      meter {
+        width: 10rem;
+        vertical-align: middle;
+      }
+      .refusal {
+        margin-top: 0.7rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav data-nav></nav>
+      <div id="identity" class="identity signed-out">
+        <strong>checking…</strong>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <div id="workspace-picker"></div>
+
+        <p class="note">
+          Billing belongs to the <strong>organization</strong>; any of its
+          workspaces is the door. Reading it needs workspace
+          <strong>ADMIN or OWNER</strong> (EDITOR and VIEWER get FORBIDDEN).
+          Changing the plan or the extra seats needs the
+          <strong>organization's OWNER</strong> — an org ADMIN is refused, and
+          so is a workspace owner who does not own the organization. No payment
+          is taken: plans are switches until payments exist.
+        </p>
+
+        <section>
+          <h2>This organization — GET /workspaces/:id/billing</h2>
+          <p class="hint">
+            seatsUsed includes seats held by pending workspace invitations;
+            viewers are free. The seat limit is seatsIncluded + seatsExtra. The
+            limits below are the current plan's, read from GET /billing/plans.
+          </p>
+          <button type="button" id="billing-button">reload billing</button>
+          <div id="billing" class="table-wrap">
+            <p class="muted">not loaded</p>
+          </div>
+        </section>
+
+        <section>
+          <h2>Plans — GET /billing/plans</h2>
+          <p class="hint">
+            Every plan, in upgrade order. Any signed-in person may read it.
+            "move here" is a fresh click: it makes a new Idempotency-Key and
+            puts it in the form below, so the form can replay it.
+          </p>
+          <button type="button" id="plans-button">reload plans</button>
+          <div id="plans" class="table-wrap">
+            <p class="muted">not loaded</p>
+          </div>
+        </section>
+
+        <section>
+          <h2>Change plan — POST /workspaces/:id/billing/plan</h2>
+          <p class="hint">
+            The same key with the same planId replays the first answer and runs
+            nothing again; the same key with a different planId is refused. A
+            blank key sends no header. A downgrade below what is in use is
+            refused with DOWNGRADE_BLOCKED.
+          </p>
+          <form id="plan-form">
+            <label>
+              planId
+              <select name="planId" id="plan-select">
+                <option value="free">free</option>
+                <option value="starter">starter</option>
+                <option value="growth">growth</option>
+                <option value="scale">scale</option>
+              </select>
+            </label>
+            <div class="row">
+              <label>
+                Idempotency-Key
+                <input type="text" id="idempotency-key" />
+              </label>
+              <button type="button" id="new-key">new key</button>
+            </div>
+            <button type="submit">change plan</button>
+          </form>
+          <div id="plan-refusal" class="refusal"></div>
+        </section>
+
+        <section>
+          <h2>Extra seats — POST /workspaces/:id/billing/seats</h2>
+          <p class="hint">
+            An absolute number, not an increment. It must be a JSON number: tick
+            the box to send it as a string and see the refusal. A limit below
+            the seats in use is refused with SEATS_BELOW_USAGE.
+          </p>
+          <form id="seats-form">
+            <div class="row">
+              <label>
+                seatsExtra
+                <input type="number" name="seatsExtra" value="0" />
+              </label>
+              <button type="submit">set seats</button>
+            </div>
+            <label class="checkbox">
+              <input type="checkbox" name="asString" />
+              send it as a JSON string — must be refused
+            </label>
+          </form>
+          <div id="seats-refusal" class="refusal"></div>
+        </section>
+      </div>
+
+      <div class="sticky-col">
+        <div id="response-panel" class="panel">
+          <div class="panel-head">
+            <span class="muted">no request yet</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="/api.js"></script>
+    <script src="/ui.js"></script>
+    <script>
+      // The last answers, so either one can redraw the other: the billing box
+      // shows the current plan's limits, the plans table marks the current.
+      let plans = [];
+      let billing = null;
+
+      const byId = (id) => document.getElementById(id);
+
+      /**
+       * Call a route under the picked workspace.
+       *
+       * @returns {Promise<object|undefined>} undefined when none is picked
+       */
+      async function workspaceCall(method, suffix, body, headers) {
+        const workspaceId = requireWorkspaceId();
+        if (workspaceId === null) {
+          return undefined;
+        }
+        return api.call(
+          method,
+          `/workspaces/${encodeURIComponent(workspaceId)}${suffix}`,
+          body,
+          headers,
+        );
+      }
+
+      function refusalText(result) {
+        return `<p class="error-line">${escapeHtml(
+          result.error ?? result.statusName,
+        )}</p>`;
+      }
+
+      function kvTable(rows) {
+        return `<table class="kv">${rows
+          .map(
+            ([name, value]) =>
+              `<tr><th>${escapeHtml(name)}</th><td data-field="${escapeHtml(
+                name,
+              )}">${escapeHtml(value)}</td></tr>`,
+          )
+          .join("")}</table>`;
+      }
+
+      // --- the organization ----------------------------------------------
+
+      function renderBilling() {
+        const box = byId("billing");
+        if (billing === null) {
+          return;
+        }
+        if (!billing.ok) {
+          box.innerHTML = refusalText(billing);
+          return;
+        }
+        const data = billing.data;
+        const usage = data.usage;
+        const seatLimit = usage.seatsIncluded + usage.seatsExtra;
+        const limits = plans.find((plan) => plan.planId === data.plan)?.limits;
+        box.innerHTML = `
+          <p>
+            seats <strong data-field="seatMeter">${escapeHtml(
+              usage.seatsUsed,
+            )} of ${escapeHtml(seatLimit)}</strong>
+            <meter min="0" max="${escapeHtml(seatLimit)}" value="${escapeHtml(
+              usage.seatsUsed,
+            )}"></meter>
+            · workspaces <strong data-field="workspaceMeter">${escapeHtml(
+              usage.workspacesUsed,
+            )} of ${escapeHtml(usage.workspaceLimit)}</strong>
+          </p>
+          ${kvTable([
+            ["orgName", data.orgName ?? "—"],
+            ["orgId", data.orgId],
+            ["plan", data.plan],
+            ["status", data.status ?? "—"],
+            ["seatsUsed", usage.seatsUsed],
+            ["pendingInviteSeats", usage.pendingInviteSeats],
+            ["seatsIncluded", usage.seatsIncluded],
+            ["seatsExtra", usage.seatsExtra],
+            ["workspacesUsed", usage.workspacesUsed],
+            ["workspaceLimit", usage.workspaceLimit],
+            ["currentPeriodEnd", data.currentPeriodEnd ?? "null"],
+            ["trialEndsAt", data.trialEndsAt ?? "null"],
+          ])}
+          <h3>limits of ${escapeHtml(data.plan)}</h3>
+          ${
+            limits
+              ? `<div id="current-limits">${kvTable(Object.entries(limits))}</div>`
+              : '<p class="muted">load the plans to see them</p>'
+          }`;
+      }
+
+      /**
+       * Read the organization's billing; the caller shows the result.
+       *
+       * @returns {Promise<object|undefined>}
+       */
+      async function loadBilling() {
+        const result = await workspaceCall("GET", "/billing");
+        if (result !== undefined) {
+          billing = result;
+          renderBilling();
+        }
+        return result;
+      }
+
+      // --- plans ---------------------------------------------------------
+
+      function planRow(plan) {
+        const current = billing?.ok && billing.data.plan === plan.planId;
+        const limits = plan.limits;
+        return `<tr data-plan-id="${escapeHtml(plan.planId)}"${
+          current ? ' class="current"' : ""
+        }>
+          <td><strong>${escapeHtml(plan.displayName)}</strong>
+            <span class="chip">${escapeHtml(plan.planId)}</span>
+            ${current ? '<span class="chip" data-field="current">current</span>' : ""}</td>
+          <td>${escapeHtml(plan.seatsIncluded)}</td>
+          <td>${escapeHtml(limits.workspaces)}</td>
+          <td>${escapeHtml(limits.projectsPerWorkspace)}</td>
+          <td>${escapeHtml(limits.apiTokens)}</td>
+          <td>${escapeHtml(limits.webhookEndpoints)}</td>
+          <td>${escapeHtml(limits.auditRetentionDays)}d</td>
+          <td>${limits.auditLogVisible ? "yes" : "no"}</td>
+          <td>${limits.badgeRemovable ? "yes" : "no"}</td>
+          <td class="row-actions"><button type="button" data-plan-id="${escapeHtml(
+            plan.planId,
+          )}">move here</button></td>
+        </tr>`;
+      }
+
+      function renderPlans() {
+        byId("plans").innerHTML =
+          plans.length === 0
+            ? '<p class="muted">no plans</p>'
+            : `<table>
+                <thead><tr><th>plan</th><th>seats</th><th>workspaces</th>
+                  <th>projects / ws</th><th>api tokens</th><th>webhooks</th>
+                  <th>audit kept</th><th>audit log</th><th>badge off</th>
+                  <th></th></tr></thead>
+                <tbody>${plans.map(planRow).join("")}</tbody>
+              </table>`;
+      }
+
+      async function loadPlans() {
+        const result = await api.get("/billing/plans");
+        if (!result.ok) {
+          byId("plans").innerHTML = refusalText(result);
+          return result;
+        }
+        plans = result.data;
+        const select = byId("plan-select");
+        const kept = select.value;
+        select.innerHTML = plans
+          .map(
+            (plan) =>
+              `<option value="${escapeHtml(plan.planId)}">${escapeHtml(
+                plan.planId,
+              )} — ${escapeHtml(plan.displayName)}</option>`,
+          )
+          .join("");
+        select.value = plans.some((plan) => plan.planId === kept)
+          ? kept
+          : plans[0]?.planId;
+        renderPlans();
+        renderBilling();
+        return result;
+      }
+
+      // --- changing plan and seats ---------------------------------------
+
+      /**
+       * A refusal's code and details in words, under the form that caused it.
+       *
+       * @param {string} boxId
+       * @param {object} result
+       * @returns {void}
+       */
+      function showRefusal(boxId, result) {
+        const box = byId(boxId);
+        if (result.ok) {
+          box.innerHTML = "";
+          return;
+        }
+        const details = result.errorDetails ?? {};
+        const detailText =
+          result.errorCode === "DOWNGRADE_BLOCKED"
+            ? `over the new plan by ${details.seatsOver} seat(s) and ${details.workspacesOver} workspace(s) — free those first`
+            : Object.entries(details)
+                .map(([key, value]) => `${key} ${JSON.stringify(value)}`)
+                .join(" · ");
+        box.innerHTML = `<p class="error-line" data-field="refusal">refused — ${escapeHtml(
+          result.error ?? result.statusName,
+        )}</p>${
+          detailText
+            ? `<p class="muted" data-field="details">${escapeHtml(detailText)}</p>`
+            : ""
+        }`;
+      }
+
+      /**
+       * Move the organization to a plan, then redraw the figures quietly so
+       * the panel keeps the plan change's own answer.
+       *
+       * @returns {Promise<object|undefined>}
+       */
+      async function changePlan(planId, key) {
+        const result = await workspaceCall(
+          "POST",
+          "/billing/plan",
+          { planId: planId },
+          key === "" ? {} : { "Idempotency-Key": key },
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        showRefusal("plan-refusal", result);
+        if (result.ok) {
+          await loadBilling();
+          renderPlans();
+        }
+        return result;
+      }
+
+      function freshKey() {
+        byId("idempotency-key").value = crypto.randomUUID();
+      }
+
+      // --- wiring --------------------------------------------------------
+
+      async function withButton(button, work) {
+        button.disabled = true;
+        try {
+          const result = await work();
+          if (result !== undefined) {
+            showResult(result);
+          }
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      byId("billing-button").addEventListener("click", (event) =>
+        withButton(event.currentTarget, loadBilling),
+      );
+
+      byId("plans-button").addEventListener("click", (event) =>
+        withButton(event.currentTarget, loadPlans),
+      );
+
+      byId("plans").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-plan-id]");
+        if (button === null) {
+          return;
+        }
+        freshKey();
+        byId("plan-select").value = button.dataset.planId;
+        withButton(button, () =>
+          changePlan(button.dataset.planId, byId("idempotency-key").value),
+        );
+      });
+
+      byId("new-key").addEventListener("click", freshKey);
+
+      onSubmit("plan-form", (values) =>
+        changePlan(values.planId, byId("idempotency-key").value.trim()),
+      );
+
+      onSubmit("seats-form", async (values) => {
+        // Blank is left out rather than read as 0, so the API's refusal shows.
+        const typed = values.seatsExtra.trim();
+        const body =
+          typed === ""
+            ? {}
+            : { seatsExtra: values.asString === "on" ? typed : Number(typed) };
+        const result = await workspaceCall("POST", "/billing/seats", body);
+        if (result === undefined) {
+          return undefined;
+        }
+        showRefusal("seats-refusal", result);
+        if (result.ok) {
+          await loadBilling();
+        }
+        return result;
+      });
+
+      onWorkspaceChange(async (workspace) => {
+        billing = null;
+        byId("plan-refusal").innerHTML = "";
+        byId("seats-refusal").innerHTML = "";
+        if (workspace === null) {
+          byId("billing").innerHTML =
+            '<p class="muted">no workspace picked</p>';
+          renderPlans();
+          return;
+        }
+        const result = await loadBilling();
+        renderPlans();
+        if (result !== undefined) {
+          showResult(result);
+        }
+      });
+
+      freshKey();
+      (async () => showResult(await loadPlans()))();
+    </script>
+  </body>
+</html>
