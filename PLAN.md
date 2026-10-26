@@ -357,7 +357,7 @@ routes; health and sample are left out on purpose. This was last checked on 29 S
 added to the docs, add it to the page it belongs to.
 
 **The role model (2026-10-25):** the API was rewritten for project-level roles
-(`docs/design-doc/workspace-system-design.md` §4.2). An organization has `OWNER` and `MEMBER`. A workspace member
+(`docs/design-doc/workspace-system-design.md` §4.1). An organization has `OWNER` and `MEMBER`. A workspace member
 carries `admin: true|false` and `projectRoles: [{ projectId, role: EDITOR|READER }]`; `accessLevel` is what that
 resolves to (`ADMIN`, `EDITOR` or `READER`). An invitation grants either `admin: true` or `projectRoles`, never
 both; accepting answers `{ workspaceId, accessLevel }`. Gone: `wsRole`, `projectAccess` (ALL/LIMITED), the
