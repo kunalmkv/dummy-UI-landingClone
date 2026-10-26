@@ -4,7 +4,7 @@
 import { del, get, patch, post, put, query, ws } from "../lib/api.js";
 import { confirmIdentity, proofFields, readProof, wireProof } from "../lib/identity.js";
 import { go } from "../lib/router.js";
-import { can, loadBootstrap, roleIn, state } from "../lib/state.js";
+import { can, loadBootstrap, ownsOrganization, roleIn, state } from "../lib/state.js";
 import {
   avatar,
   busy,
@@ -645,21 +645,17 @@ async function audit(target, id) {
 
 async function danger(target, id) {
   const workspace = state.workspace;
-  const role = roleIn(id);
   const archived = workspace.status !== "ACTIVE";
-  const canArchive = can("workspace.archive");
+  // The workspace's lifecycle is the organization Owner's, never a workspace capability.
+  const owner = ownsOrganization(workspace.orgId);
   mount(
     target,
     html`<div class="card danger-card">
       <div class="card-head"><div><h2>Danger zone</h2><p>Changes here are hard to undo.</p></div></div>
-      ${canArchive
+      ${owner
         ? html`<div class="danger-row"><div><h3>${archived ? "Restore workspace" : "Archive workspace"}</h3><p>${archived ? "Bring it back to normal. Members get their access back." : "Make everything read-only and free its seats. You can restore it later."}</p></div>
             ${archived ? html`<button class="btn" data-restore>Restore</button>` : html`<button class="btn btn-danger" data-archive>Archive…</button>`}</div>`
-        : ""}
-      ${role !== "OWNER"
-        ? html`<div class="danger-row"><div><h3>Leave workspace</h3><p>You'll lose access until someone invites you again.</p></div><button class="btn btn-danger" data-leave>Leave</button></div>`
-        : ""}
-      ${!canArchive && role === "OWNER" ? emptyState({ iconName: "shield", title: "Nothing to do here", text: "" }) : ""}
+        : html`<div class="danger-row"><div><h3>Leave workspace</h3><p>You'll lose access until someone invites you again.</p></div><button class="btn btn-danger" data-leave>Leave</button></div>`}
     </div>`,
   );
 

@@ -93,12 +93,14 @@ async function freshTotp(secret) {
 
     await step("change password: a mismatch is refused, then it changes", async () => {
       await page.goto(`${HARNESS}/#/account/password`);
-      await page.fill('[name="currentPassword"]', PASSWORD);
-      await page.fill('[name="newPassword"]', NEW_PASSWORD);
-      await page.fill('[name="repeat"]', "not the same one");
+      // The profile's email card has a currentPassword too: wait for this form.
+      await page.locator("#password-form").waitFor();
+      await page.fill('#password-form [name="currentPassword"]', PASSWORD);
+      await page.fill('#password-form [name="newPassword"]', NEW_PASSWORD);
+      await page.fill('#password-form [name="repeat"]', "not the same one");
       await page.getByRole("button", { name: "Change password" }).click();
       await waitText(page, "#password-form .form-error", /don't match/);
-      await page.fill('[name="repeat"]', NEW_PASSWORD);
+      await page.fill('#password-form [name="repeat"]', NEW_PASSWORD);
       await page.getByRole("button", { name: "Change password" }).click();
       await waitText(page, ".toast", /Password changed/);
     });
@@ -392,7 +394,8 @@ async function freshTotp(secret) {
       // Unlink: shown for a linked account; the API's answers are stood in for here.
       await gPage.route("**/api/auth/profile/get", reshape((body) => (body.result.data.googleLinked = true)));
       await gPage.route("**/api/auth/google/unlink", (route) => route.fulfill({ json: { result: { message: "Success", data: { unlinked: true }, error: null }, status: 200 } }));
-      await gPage.goto(`${HARNESS}/#/account/google`);
+      // Already on this URL, so a goto would draw nothing new: reload instead.
+      await gPage.reload();
       await gPage.getByRole("button", { name: /Unlink/ }).click();
       await gPage.fill('.modal [name="currentPassword"]', RESET_PASSWORD);
       await gPage.locator(".modal [data-submit]").click();

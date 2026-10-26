@@ -34,6 +34,11 @@ export function myOrganizations() {
   return state.bootstrap?.orgs ?? state.bootstrap?.organizations ?? [];
 }
 
+/** Is the caller the Owner of this organization? Archive and restore are theirs. */
+export function ownsOrganization(orgId) {
+  return myOrganizations().find((one) => one.id === orgId)?.orgRole === "OWNER";
+}
+
 /** The caller's role in a workspace, from the switcher list. */
 export function roleIn(workspaceId) {
   return myWorkspaces().find((one) => one.id === workspaceId)?.role ?? null;

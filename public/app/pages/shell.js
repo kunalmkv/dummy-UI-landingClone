@@ -3,7 +3,7 @@
 
 import { get, post, query, ws } from "../lib/api.js";
 import { go, navigation } from "../lib/router.js";
-import { can, loadBootstrap, loadWorkspace, myWorkspaces, roleIn, state } from "../lib/state.js";
+import { can, loadBootstrap, loadWorkspace, myWorkspaces, ownsOrganization, roleIn, state } from "../lib/state.js";
 import { avatar, busy, fullName, html, icon, mount, plural, popover, roleChip, timeAgo, toast } from "../lib/ui.js";
 import { signOut } from "./auth.js";
 import { openCreateWorkspace, openWorkspace, wireInvites } from "./start.js";
@@ -88,7 +88,7 @@ export async function shell({ workspaceId, active, crumb }) {
         </header>
         <div id="invite-banner"></div>
         ${archived
-          ? html`<div class="banner">${icon("archive")}<span>This workspace is archived, so everything in it is read-only.</span>${can("workspace.archive") ? html`<button class="btn btn-sm" data-restore>Restore workspace</button>` : ""}</div>`
+          ? html`<div class="banner">${icon("archive")}<span>This workspace is archived, so everything in it is read-only.</span>${ownsOrganization(state.workspace?.orgId) ? html`<button class="btn btn-sm" data-restore>Restore workspace</button>` : ""}</div>`
           : ""}
         <div class="content" id="content"></div>
       </div>
