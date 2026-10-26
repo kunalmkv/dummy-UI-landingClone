@@ -85,6 +85,21 @@
       .box {
         margin-top: 0.8rem;
       }
+      h3 {
+        margin: 1rem 0 0.2rem;
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      textarea {
+        min-height: 3.5rem;
+        resize: vertical;
+      }
+      td.row-actions select {
+        width: auto;
+        margin: 0 0.3rem 0 0;
+        padding: 0.2rem 0.3rem;
+      }
     </style>
   </head>
   <body>
@@ -100,10 +115,11 @@
         <div id="workspace-picker"></div>
 
         <p class="note">
-          Anyone in the workspace may <strong>read</strong> projects. Renaming
-          needs <strong>EDITOR or above</strong>; creating and archiving need
-          <strong>ADMIN or OWNER</strong> (an org owner or admin counts as a
-          workspace admin). Each ACTIVE project takes one place in the plan's
+          A project is reached by the workspace's <strong>admins</strong> (the
+          organization's Owner counting) and by the people
+          <strong>placed on it</strong> as EDITOR or READER; anyone else gets
+          404. Creating, renaming, archiving and placing people need an admin.
+          Each ACTIVE project takes one place in the plan's
           projects-per-workspace limit (free: 5); archiving gives it back, and
           there is no unarchive.
         </p>
@@ -201,7 +217,7 @@
           <h2>One project</h2>
           <p class="hint">
             "select" on a row fills the id. GET works on ACTIVE and ARCHIVED
-            projects; a LIMITED member gets 404 for one they were not given.
+            projects; someone not placed on a project gets 404 for it.
           </p>
           <form id="get-form">
             <div class="row">
@@ -240,6 +256,68 @@
             </label>
             <button type="submit">save changes</button>
           </form>
+        </section>
+
+        <section>
+          <h2>People — GET /workspaces/:id/projects/:projectId/members</h2>
+          <p class="hint">
+            Who reaches the selected project: the admins (via ADMIN) and the
+            people placed on it (via PROJECT_ROLE). Anyone on the project may
+            read it. Placing, changing and removing need an admin; an admin's
+            own entry cannot be changed here.
+          </p>
+          <button type="button" id="people-button">load people</button>
+          <div id="people-table" class="table-wrap box"></div>
+
+          <h3>Place or change — PUT …/members/:userId</h3>
+          <p class="hint">
+            A member of the workspace, at EDITOR or READER. A first EDITOR role
+            takes a paid seat. Not in the workspace yet? Invite them below.
+          </p>
+          <form id="place-form">
+            <div class="row">
+              <label>
+                userId — from the members page
+                <input type="text" name="userId" id="place-user-id" />
+              </label>
+              <label>
+                role
+                <select name="role">
+                  <option>EDITOR</option>
+                  <option>READER</option>
+                </select>
+              </label>
+              <button type="submit">place on this project</button>
+            </div>
+          </form>
+
+          <h3>Invite into this project — POST …/projects/:projectId/invites</h3>
+          <p class="hint">
+            Answers 201 like the workspace send: a workspace invitation with
+            this one project role filled in. Someone already in the workspace
+            is refused ALREADY_MEMBER — place them instead.
+          </p>
+          <form id="project-invite-form">
+            <label>
+              recipients — one per line, or separated by commas
+              <textarea name="recipients" id="project-invite-recipients"></textarea>
+            </label>
+            <div class="row">
+              <label>
+                role
+                <select name="role">
+                  <option>EDITOR</option>
+                  <option>READER</option>
+                </select>
+              </label>
+              <label>
+                message — optional
+                <input type="text" name="message" />
+              </label>
+              <button type="submit">send invitations</button>
+            </div>
+          </form>
+          <div id="project-invite-outcome" class="box"></div>
         </section>
       </div>
 
@@ -397,6 +475,7 @@
             <code>by ${escapeHtml(project.createdBy)}</code></td>
           <td class="row-actions">
             <button type="button" data-action="select" data-project-id="${id}">select</button>
+            <button type="button" data-action="people" data-project-id="${id}">people</button>
             <button type="button" data-action="archive" data-project-id="${id}">archive</button>
           </td>
         </tr>`;
@@ -501,6 +580,136 @@
         return result;
       }
 
+      // --- people on a project -------------------------------------------
+
+      // The people as last loaded, so a change redraws one row from its answer.
+      let people = [];
+
+      function personRow(person) {
+        const userId = escapeHtml(person.userId);
+        const placed = person.via === "PROJECT_ROLE";
+        return `<tr data-user-id="${userId}">
+          <td><strong>${escapeHtml(person.displayName || "—")}</strong>
+            <div>${escapeHtml(person.email)}</div><code>${userId}</code></td>
+          <td><span class="chip" data-field="role">${escapeHtml(
+            person.role,
+          )}</span></td>
+          <td data-field="via">${escapeHtml(person.via)}</td>
+          <td data-field="status">${escapeHtml(person.status)}</td>
+          <td class="row-actions">${
+            placed
+              ? `<select data-role-select>${["EDITOR", "READER"]
+                  .map(
+                    (role) =>
+                      `<option${role === person.role ? " selected" : ""}>${role}</option>`,
+                  )
+                  .join("")}</select>
+                <button type="button" data-person-action="role" data-user-id="${userId}">set role</button>
+                <button type="button" data-person-action="remove" data-user-id="${userId}">remove</button>`
+              : '<span class="muted">an admin — change them on members</span>'
+          }</td>
+        </tr>`;
+      }
+
+      function renderPeople() {
+        byId("people-table").innerHTML =
+          people.length === 0
+            ? '<p class="muted">nobody on this project</p>'
+            : `<table>
+                <thead><tr><th>person</th><th>role</th><th>via</th>
+                  <th>status</th><th></th></tr></thead>
+                <tbody>${people.map(personRow).join("")}</tbody>
+              </table>`;
+      }
+
+      async function loadPeople(projectId) {
+        byId("project-id").value = projectId;
+        const result = await workspaceCall(
+          "GET",
+          projectSuffix(projectId, "/members"),
+        );
+        if (result === undefined) {
+          return undefined;
+        }
+        if (!result.ok) {
+          byId("people-table").innerHTML = refusalText(result);
+          return result;
+        }
+        people = result.data.items;
+        renderPeople();
+        return result;
+      }
+
+      /**
+       * Place someone on the selected project, or change their role there.
+       *
+       * @returns {Promise<object|undefined>}
+       */
+      async function placePerson(projectId, userId, role) {
+        const result = await workspaceCall(
+          "PUT",
+          projectSuffix(projectId, `/members/${encodeURIComponent(userId)}`),
+          { role: role },
+        );
+        if (result?.ok) {
+          const changed = result.data.member;
+          people = people.some((person) => person.userId === changed.userId)
+            ? people.map((person) =>
+                person.userId === changed.userId ? changed : person,
+              )
+            : [...people, changed];
+          renderPeople();
+        }
+        return result;
+      }
+
+      async function removePerson(projectId, userId) {
+        const result = await workspaceCall(
+          "DELETE",
+          projectSuffix(projectId, `/members/${encodeURIComponent(userId)}`),
+          {},
+        );
+        if (result?.ok) {
+          people = people.filter((person) => person.userId !== userId);
+          renderPeople();
+          if (result.data.leftWorkspace) {
+            byId("people-table").insertAdjacentHTML(
+              "afterbegin",
+              '<p class="muted" id="left-note">that was their last role — they left the workspace</p>',
+            );
+          }
+        }
+        return result;
+      }
+
+      function renderProjectInvites(result) {
+        const box = byId("project-invite-outcome");
+        if (!result.ok) {
+          box.innerHTML = refusalText(result);
+          return;
+        }
+        const rows = result.data.invites
+          .map(
+            (invite) => `<tr data-sent-id="${escapeHtml(invite.inviteId)}">
+              <td>${escapeHtml(invite.email)}</td>
+              <td>${escapeHtml(
+                (invite.projectRoles ?? [])
+                  .map((entry) => `${entry.role} on ${entry.projectId}`)
+                  .join(", "),
+              )}</td>
+              <td><code>${escapeHtml(invite.inviteId)}</code></td>
+            </tr>`,
+          )
+          .join("");
+        box.innerHTML = `<table>
+            <tr><th>email</th><th>project role</th><th>inviteId</th></tr>
+            ${rows || '<tr><td colspan="3" class="muted">nothing new</td></tr>'}
+          </table>
+          <p class="muted">already invited, skipped: ${escapeHtml(
+            (result.data.alreadyInvited ?? []).join(", ") || "none",
+          )}</p>`;
+      }
+
       // --- wiring --------------------------------------------------------
 
       /**
@@ -534,7 +743,66 @@
         });
       }
 
-      const ROW_ACTIONS = { select: selectProject, archive: archiveProject };
+      const ROW_ACTIONS = {
+        select: selectProject,
+        people: loadPeople,
+        archive: archiveProject,
+      };
+
+      byId("people-button").addEventListener("click", (event) => {
+        const projectId = selectedProjectId();
+        if (projectId !== null) {
+          withButton(event.currentTarget, () => loadPeople(projectId));
+        }
+      });
+
+      byId("people-table").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-person-action]");
+        const projectId = button === null ? null : selectedProjectId();
+        if (projectId === null) {
+          return;
+        }
+        const userId = button.dataset.userId;
+        withButton(button, () =>
+          button.dataset.personAction === "remove"
+            ? removePerson(projectId, userId)
+            : placePerson(
+                projectId,
+                userId,
+                button.closest("tr").querySelector("[data-role-select]").value,
+              ),
+        );
+      });
+
+      onSubmit("place-form", (values) => {
+        const projectId = selectedProjectId();
+        return projectId === null
+          ? undefined
+          : placePerson(projectId, values.userId.trim(), values.role);
+      });
+
+      onSubmit("project-invite-form", async (values) => {
+        const projectId = selectedProjectId();
+        if (projectId === null) {
+          return undefined;
+        }
+        const body = {
+          recipients: values.recipients.split(/[\s,;]+/).filter(Boolean),
+          role: values.role,
+        };
+        if (values.message.trim() !== "") {
+          body.message = values.message.trim();
+        }
+        const result = await workspaceCall(
+          "POST",
+          projectSuffix(projectId, "/invites"),
+          body,
+        );
+        if (result !== undefined) {
+          renderProjectInvites(result);
+        }
+        return result;
+      });
 
       byId("projects-table").addEventListener("click", (event) => {
         const button = event.target.closest("button[data-action]");
@@ -607,9 +875,12 @@
       // A new workspace: forget the old one's projects and list this one's.
       onWorkspaceChange(async (workspace) => {
         projects = [];
+        people = [];
         nextCursor = null;
         byId("project-id").value = "";
         byId("project-detail").innerHTML = "";
+        byId("people-table").innerHTML = "";
+        byId("project-invite-outcome").innerHTML = "";
         if (workspace === null) {
           byId("projects-table").innerHTML =
             '<p class="muted">no workspace picked</p>';

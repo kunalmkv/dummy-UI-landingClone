@@ -193,7 +193,15 @@
             <tr><th>invited by</th><td>${escapeHtml(
               invite.inviterName ?? "—",
             )}</td></tr>
-            <tr><th>role</th><td>${escapeHtml(invite.wsRole)}</td></tr>
+            <tr><th>access</th><td id="summary-access">${
+              invite.admin === true
+                ? "ADMIN — every project"
+                : escapeHtml(
+                    (invite.projectRoles ?? [])
+                      .map((entry) => `${entry.role} on ${entry.projectId}`)
+                      .join(", ") || "none",
+                  )
+            }</td></tr>
             <tr><th>for</th><td id="summary-email">${escapeHtml(
               invite.email,
             )}</td></tr>
@@ -248,7 +256,7 @@
           ? '<section><p class="joined">declined — this link no longer works</p></section>'
           : `<section><p class="joined">joined workspace
               <code>${escapeHtml(result.data.workspaceId)}</code> as
-              <strong>${escapeHtml(result.data.role)}</strong></p>
+              <strong>${escapeHtml(result.data.accessLevel)}</strong></p>
               <p class="muted">see it on <a href="/members">members</a> or
               <a href="/invitations">invitations</a></p></section>`;
       }

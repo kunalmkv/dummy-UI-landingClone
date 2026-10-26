@@ -119,7 +119,7 @@ async function waitText(page, selector, pattern, timeout = 60000) {
       await shot(page, "08-projects");
     });
 
-    await step("members: invite Vic and Wes as editors with a live seat preview, then Yan as a viewer", async () => {
+    await step("members: invite Vic and Wes as editors on the project with a live seat preview, then Yan as a reader", async () => {
       await page.locator(".nav a", { hasText: "Members" }).click();
       await page.waitForURL(/\/members$/);
       await waitText(page, "[data-seats]", /seats used/);
@@ -129,9 +129,9 @@ async function waitText(page, selector, pattern, timeout = 60000) {
       await shot(page, "09-invite");
       await page.getByRole("button", { name: /Send invitations/ }).click();
       await waitText(page, "[data-panel]", new RegExp(escapeRegex(wes.email)));
-      // A viewer is free, so Una + two editors still fit the free plan's three seats.
+      // A reader is free, so Una + two editors still fit the free plan's three seats.
       await page.getByRole("button", { name: "Invite people" }).click();
-      await page.locator('.modal [data-role="VIEWER"]').click();
+      await page.locator('.modal [data-role="READER"]').click();
       await page.fill('.modal [name="emails"]', yan.email);
       await waitText(page, ".modal [data-preview]", /Will be invited/);
       await page.getByRole("button", { name: /Send invitations/ }).click();

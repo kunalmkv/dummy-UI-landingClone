@@ -34,14 +34,15 @@ async function setup(who, method, path, data) {
 }
 
 /**
- * Invite someone into a workspace and accept it as them.
+ * Invite someone onto one project of a workspace and accept it as them.
  *
+ * @param {string} role EDITOR or READER on the project
  * @returns {Promise<void>}
  */
-async function join(inviter, workspaceId, joiner, wsRole) {
+async function join(inviter, workspaceId, projectId, joiner, role) {
   await setup(inviter, "POST", `/workspaces/${workspaceId}/invites`, {
     recipients: [joiner.email],
-    wsRole: wsRole,
+    projectRoles: [{ projectId: projectId, role: role }],
   });
   const invite = await mail(joiner.email, "WORKSPACE_INVITE");
   await setup(joiner, "POST", "/invites/accept", {
@@ -121,7 +122,7 @@ async function listProjects(
   assertOk(await click(page, LIST), "list projects");
 }
 
-async function projectsSteps(olga, eve, workspaceId) {
+async function projectsSteps(olga, eve, workspaceId, eveId) {
   const page = olga.page;
 
   await step(
@@ -300,11 +301,38 @@ async function projectsSteps(olga, eve, workspaceId) {
   );
 
   await step(
-    "Eve (EDITOR) reads and renames, but cannot create or archive",
+    "Eve joins as an EDITOR on Spring, then sees its people",
+    async () => {
+      await join(olga, workspaceId, springId, eve, "EDITOR");
+      await page.fill("#api-token", "");
+      await page.fill("#project-id", springId);
+      assertOk(await click(page, "#people-button"), "people");
+      const eveRow = page.locator("#people-table tr", { hasText: eve.email });
+      assert.equal(
+        await eveRow.locator('[data-field="role"]').innerText(),
+        "EDITOR",
+      );
+      assert.equal(
+        await eveRow.locator('[data-field="via"]').innerText(),
+        "PROJECT_ROLE",
+      );
+      assert.equal(
+        await page
+          .locator("#people-table tr", { hasText: olga.email })
+          .locator('[data-field="via"]')
+          .innerText(),
+        "ADMIN",
+      );
+    },
+  );
+
+  await step(
+    "Eve (EDITOR) reads Spring only, and is refused create, rename and archive",
     async () => {
       const evePage = eve.page;
       await evePage.goto(`${HARNESS}/projects`);
       await projectRow(evePage, springId).waitFor();
+      assert.equal(await projectRows(evePage), 1);
       const refused = (await createProject(evePage, "affify", "Eve's", ""))
         .shown;
       assert.equal(refused.status, 403);
@@ -318,14 +346,36 @@ async function projectsSteps(olga, eve, workspaceId) {
         "Eve gets one",
       );
       await evePage.fill('#change-form input[name="name"]', "Spring leads v3");
-      assertOk(await click(evePage, CHANGE), "Eve renames");
-      assert.equal(
-        await projectField(evePage, springId, "name"),
-        "Spring leads v3",
-      );
+      const rename = await click(evePage, CHANGE);
+      assert.equal(rename.status, 403);
+      assert.match(await errorLine(evePage), /permission/);
       const archive = await click(evePage, "#archive-button");
       assert.equal(archive.status, 403);
       assert.match(await errorLine(evePage), /permission/);
+    },
+  );
+
+  await step(
+    "Olga makes Eve a READER on Spring, then takes her off it: she leaves",
+    async () => {
+      await page.fill("#place-user-id", eveId);
+      await page.selectOption('#place-form select[name="role"]', "READER");
+      assertOk(await click(page, '#place-form button[type="submit"]'), "place");
+      const eveRow = page.locator("#people-table tr", { hasText: eve.email });
+      assert.equal(
+        await eveRow.locator('[data-field="role"]').innerText(),
+        "READER",
+      );
+      assertOk(
+        await act(page, () =>
+          eveRow.locator('button[data-person-action="remove"]').click(),
+        ),
+        "remove",
+      );
+      assert.match(await page.locator("#left-note").innerText(), /left the workspace/);
+      assert.equal(await eveRow.count(), 0);
+      // Back in, as an EDITOR, for the billing and audit steps below.
+      await join(olga, workspaceId, springId, eve, "EDITOR");
     },
   );
 }
@@ -635,7 +685,7 @@ async function auditSteps(olga, eve, runStartedAt, eveId) {
     const eve = await step("Eve signs up", () => person(run, "Eve"));
 
     const { workspaceId, orgId, eveId } = await step(
-      "Olga makes a workspace; Eve joins it as an EDITOR",
+      "Olga makes a workspace; Eve joins once it has a project",
       async () => {
         const profile = await setup(olga, "GET", "/auth/profile/get");
         const orgId = profile.user.organizationId;
@@ -645,7 +695,6 @@ async function auditSteps(olga, eve, runStartedAt, eveId) {
           `/organizations/${orgId}/workspaces`,
           { name: "PBA Lab", timezone: "UTC" },
         );
-        await join(olga, created.workspaceId, eve, "EDITOR");
         const eveProfile = await setup(eve, "GET", "/auth/profile/get");
         return {
           workspaceId: created.workspaceId,
@@ -655,7 +704,7 @@ async function auditSteps(olga, eve, runStartedAt, eveId) {
       },
     );
 
-    await projectsSteps(olga, eve, workspaceId);
+    await projectsSteps(olga, eve, workspaceId, eveId);
     await auditGateSteps(olga);
     await billingSteps(olga, eve, orgId);
     await auditSteps(olga, eve, runStartedAt, eveId);

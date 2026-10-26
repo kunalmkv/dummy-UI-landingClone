@@ -429,57 +429,43 @@ function inviteRow(page, email) {
       );
     });
 
-    // Workspace and ownership mails, made through the API, for the inbox.
+    // A workspace mail, made through the API, for the inbox.
     const [dora, eve] = await step("Dora and Eve sign up", () =>
       Promise.all([person(run, "Dora"), person(run, "Eve")]),
     );
     everyone.push(dora, eve);
 
     const tokens = await step(
-      "Dora invites Eve to a workspace and offers her ownership",
+      "Dora invites Eve onto a project of her workspace",
       async () => {
         const doraOrgId = (await callApi(dora, "GET", "/auth/profile/get")).user
           .organizationId;
-        const eveId = (await callApi(eve, "GET", "/auth/profile/get")).user.id;
         const { workspaceId } = await callApi(
           dora,
           "POST",
           `/organizations/${doraOrgId}/workspaces`,
           { name: "Harbor", timezone: "UTC" },
         );
+        const { projectId } = await callApi(
+          dora,
+          "POST",
+          `/workspaces/${workspaceId}/projects`,
+          { appId: "affify", name: "Pier" },
+        );
         await callApi(dora, "POST", `/workspaces/${workspaceId}/invites`, {
           recipients: [eve.email],
-          wsRole: "EDITOR",
+          projectRoles: [{ projectId: projectId, role: "EDITOR" }],
         });
         const invite = (
           await mail(eve.email, "WORKSPACE_INVITE")
         ).payload.inviteLink.split("#")[1];
         await callApi(eve, "POST", "/invites/accept", { token: invite });
-        await callApi(dora, "POST", "/auth/identity/confirm", {
-          action: "WORKSPACE_OWNERSHIP_TRANSFER",
-          password: PASSWORD,
-        });
-        await callApi(
-          dora,
-          "POST",
-          `/workspaces/${workspaceId}/ownership-transfer`,
-          {
-            toUserId: eveId,
-            confirmName: "Harbor",
-          },
-        );
-        const offer = (
-          await mail(eve.email, "OWNERSHIP_TRANSFER")
-        ).payload.transferLink.split("#")[1];
-        await callApi(eve, "POST", "/ownership-transfers/accept", {
-          token: offer,
-        });
-        return { invite: invite, offer: offer };
+        return { invite: invite };
       },
     );
 
     await step(
-      "Eve's inbox shows her code, workspace invite and offer",
+      "Eve's inbox shows her code and workspace invite",
       async () => {
         await open(eve.page, "/inbox");
         await eve.page.fill("#filter-email", eve.email);
@@ -507,39 +493,13 @@ function inviteRow(page, email) {
         );
 
         const invite = eve.page.locator("#rows tr[data-type=WORKSPACE_INVITE]");
-        assert.match(await invite.innerText(), /Harbor[\s\S]*EDITOR/);
+        assert.match(await invite.innerText(), /Harbor/);
         assert.equal(
           await invite.locator("a[data-link=inviteLink]").getAttribute("href"),
           `${HARNESS}/invite#${tokens.invite}`,
         );
-
-        const offer = eve.page.locator(
-          "#rows tr[data-type=OWNERSHIP_TRANSFER]",
-        );
-        const offerLink = offer.locator("a[data-link=transferLink]");
-        assert.equal(
-          await offerLink.innerText(),
-          "review the ownership offer →",
-        );
-        assert.equal(
-          await offerLink.getAttribute("href"),
-          `${HARNESS}/ownership#${tokens.offer}`,
-        );
       },
     );
-
-    await step("Dora's inbox shows the handover notice's payload", async () => {
-      await open(dora.page, `/inbox?email=${encodeURIComponent(dora.email)}`);
-      const notice = dora.page.locator(
-        "#rows tr[data-type=OWNERSHIP_TRANSFERRED]",
-      );
-      assert.match(await notice.innerText(), /toName\s+Eve Tester/);
-      assert.match(await notice.innerText(), /workspaceName\s+Harbor/);
-      assert.equal(
-        await notice.locator("a[data-link=appLink]").getAttribute("href"),
-        `${HARNESS}/`,
-      );
-    });
 
     await step("no page threw", () =>
       everyone.forEach((someone) => assert.deepEqual(someone.errors, [])),

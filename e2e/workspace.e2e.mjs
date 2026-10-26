@@ -54,7 +54,7 @@ function text(page, selector) {
   return page.locator(selector).innerText();
 }
 
-/** Ada owns a workspace; Bob joins it as a VIEWER through a real invite. */
+/** Ada owns a workspace; Bob joins it as a READER on its project through a real invite. */
 async function setUp(run) {
   const ada = await person(run, "Ada");
   const bob = await person(run, "Bob");
@@ -69,11 +69,23 @@ async function setUp(run) {
   );
   assert.equal(created.status, 201, JSON.stringify(created));
   const workspace = { name: name, ...created.result.data };
+  const project = await apiCall(
+    ada,
+    "POST",
+    `/workspaces/${workspace.workspaceId}/projects`,
+    { appId: "affify", name: "Lab project" },
+  );
+  assert.equal(project.status, 201, JSON.stringify(project));
   const invited = await apiCall(
     ada,
     "POST",
     `/workspaces/${workspace.workspaceId}/invites`,
-    { recipients: [bob.email], wsRole: "VIEWER" },
+    {
+      recipients: [bob.email],
+      projectRoles: [
+        { projectId: project.result.data.projectId, role: "READER" },
+      ],
+    },
   );
   assert.equal(invited.status, 201, JSON.stringify(invited));
   const invite = await mail(bob.email, "WORKSPACE_INVITE");
@@ -91,7 +103,7 @@ async function setUp(run) {
   try {
     run = await startRun("workspace");
     const { ada, bob, workspace } = await step(
-      "set up: Ada owns a workspace, Bob joins it as a viewer",
+      "set up: Ada owns a workspace, Bob joins it as a reader",
       () => setUp(run),
     );
     workspaceId = workspace.workspaceId;
@@ -288,7 +300,7 @@ async function setUp(run) {
     });
 
     await step(
-      "Bob, a viewer, reads the workspace but is refused a rename",
+      "Bob, a reader, reads the workspace but is refused a rename",
       async () => {
         await openWorkspacePage(bob, "Changed Elsewhere");
         assertOk(await click(bob.page, "#load-capabilities"), "capabilities");

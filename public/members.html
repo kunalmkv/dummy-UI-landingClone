@@ -89,6 +89,10 @@
       .warn {
         color: var(--refused);
       }
+      #project-roles-editor select {
+        width: auto;
+        padding: 0.2rem 0.3rem;
+      }
     </style>
   </head>
   <body>
@@ -104,10 +108,12 @@
         <div id="workspace-picker"></div>
 
         <p class="note">
-          Any member may <strong>read</strong> the list, one member, seats and
-          presence. Changing, suspending and removing someone needs
-          <strong>ADMIN or above</strong>. The owner is fixed — only a transfer
-          moves them — and nobody can act on themselves: that is what leave is
+          Reading the list, one member, seats and presence needs a workspace
+          <strong>admin</strong> (the organization's Owner counts as one); so
+          does every change. A workspace has one role, the
+          <strong>admin flag</strong>; everyone else holds
+          <strong>project roles</strong> — EDITOR or READER on each project they
+          are placed on. Nobody can act on themselves: that is what leave is
           for. The panel shows the call you triggered; the table redraws from
           its answer.
         </p>
@@ -122,13 +128,11 @@
           <form id="list-form">
             <div class="row">
               <label>
-                role
-                <select name="role">
+                admin
+                <select name="admin">
                   <option value="">any</option>
-                  <option>OWNER</option>
-                  <option>ADMIN</option>
-                  <option>EDITOR</option>
-                  <option>VIEWER</option>
+                  <option value="true">true — the admins</option>
+                  <option value="false">false — placed on projects</option>
                 </select>
               </label>
               <label>
@@ -154,7 +158,7 @@
                 <input type="text" name="q" />
               </label>
               <label>
-                projectId — who reaches it
+                projectId — the admins and who holds a role on it
                 <input type="text" name="projectId" />
               </label>
               <label>
@@ -188,41 +192,37 @@
           </form>
           <div id="member-detail" class="box"></div>
 
-          <h3>Role — PATCH …/members/:userId</h3>
-          <form id="role-form">
+          <h3>Admin — PUT …/admins/:userId · DELETE …/admins/:userId</h3>
+          <p class="hint">
+            Checked sends PUT (no body): their project roles are cleared, they
+            hold every project. Unchecked sends DELETE with the project roles
+            picked below as the ones they keep; with none picked they leave the
+            workspace. The Owner is refused OWNER_IS_ADMIN either way.
+          </p>
+          <form id="admin-form">
             <div class="row">
-              <label>
-                wsRole
-                <select name="wsRole">
-                  <option>ADMIN</option>
-                  <option selected>EDITOR</option>
-                  <option>VIEWER</option>
-                  <option>OWNER</option>
-                </select>
+              <label class="checkbox">
+                <input type="checkbox" name="admin" id="admin-toggle" />
+                admin
               </label>
-              <button type="submit">set role</button>
+              <button type="submit">apply admin flag</button>
             </div>
           </form>
-          <p class="hint">
-            OWNER is listed so you can watch it be refused: ownership moves only
-            by transfer. A raise from VIEWER needs a free paid seat.
-          </p>
 
-          <h3>Project access — PATCH …/members/:userId/project-access</h3>
-          <form id="access-form">
-            <div class="row">
-              <label>
-                mode
-                <select name="mode">
-                  <option>ALL</option>
-                  <option>LIMITED</option>
-                </select>
-              </label>
-              <label>
-                projectIds — comma separated, LIMITED only
-                <input type="text" name="projectIds" />
-              </label>
-              <button type="submit">set access</button>
+          <h3>Project roles — PUT …/members/:userId/project-roles</h3>
+          <p class="hint">
+            Replace, not merge: the choices below are the whole list they hold
+            afterwards. All "none" sends an empty list, which takes them out of
+            the workspace. Refused for an admin — take the flag away first. A
+            first EDITOR role needs a free paid seat; READER is free.
+          </p>
+          <form id="roles-form">
+            <div class="actions">
+              <button type="button" id="load-projects">load projects</button>
+              <button type="submit">set project roles</button>
+            </div>
+            <div id="project-roles-editor" class="box">
+              <p class="muted">press "load projects"</p>
             </div>
           </form>
 
@@ -249,9 +249,10 @@
         <section>
           <h2>Leave — POST …/members/me/leave</h2>
           <p class="hint">
-            Leaves the picked workspace yourself. The owner is refused while
-            anyone else is still here. reassignToUserId is only needed when you
-            sent invitations here that are still pending.
+            Leaves the picked workspace yourself. Anyone may, the Owner
+            included — they keep reaching it through the organization.
+            reassignToUserId is only needed when you sent invitations here that
+            are still pending.
           </p>
           <form id="leave-form">
             <div class="row">
@@ -267,7 +268,8 @@
         <section>
           <h2>Seats — GET /workspaces/:id/seats</h2>
           <p class="hint">
-            Organization-wide numbers, not this workspace's. A VIEWER is free.
+            Organization-wide numbers, not this workspace's. byRole has three
+            segments, OWNER, ADMIN and EDITOR. A READER is free.
           </p>
           <button type="button" id="seats-button">load seats</button>
           <div id="seats" class="box"></div>
@@ -300,8 +302,12 @@
       // answer instead of reloading — the panel then keeps the action.
       let members = [];
       let nextCursor = null;
+      // The workspace's projects, for the project-roles editor.
+      let projects = [];
 
       const byId = (id) => document.getElementById(id);
+
+      const PROJECT_ROLES = ["READER", "EDITOR"];
 
       /**
        * Call a route under the picked workspace.
@@ -351,8 +357,19 @@
         return iso ? new Date(iso).toLocaleString() : "never";
       }
 
-      function access(projectAccess) {
-        return `${projectAccess.mode} ${projectAccess.granted}/${projectAccess.total}`;
+      /**
+       * A member's project roles as one line: "EDITOR on <id>, READER on <id>".
+       *
+       * @param {object} member
+       * @returns {string}
+       */
+      function rolesText(member) {
+        if (member.admin) {
+          return "every project (admin)";
+        }
+        return (member.projectRoles ?? [])
+          .map((entry) => `${entry.role} on ${entry.projectId}`)
+          .join(", ");
       }
 
       function refusalText(result) {
@@ -405,6 +422,9 @@
         const id = escapeHtml(member.userId);
         const statusAction =
           member.status === "SUSPENDED" ? "reactivate" : "suspend";
+        const reached = member.projects
+          ? `${member.projects.reached}/${member.projects.total}`
+          : "—";
         return `<tr data-user-id="${id}"${
           member.status === "SUSPENDED" ? ' class="suspended"' : ""
         }>
@@ -414,7 +434,12 @@
             <code>${id}</code>
           </td>
           <td>
-            <span class="chip" data-field="role">${escapeHtml(member.wsRole)}</span>
+            <span class="chip" data-field="access">${escapeHtml(
+              member.accessLevel ?? "—",
+            )}</span>
+            <span class="chip" data-field="admin">${
+              member.admin ? "admin" : "not admin"
+            }</span>
             <span class="chip" data-field="status">${escapeHtml(member.status)}</span>
             ${member.isExternal ? '<span class="chip">external</span>' : ""}
           </td>
@@ -424,7 +449,10 @@
             )}">● ${escapeHtml(member.presence)}</span>
             <div class="muted">active ${escapeHtml(when(member.lastActiveAt))}</div>
           </td>
-          <td data-field="access">${escapeHtml(access(member.projectAccess))}</td>
+          <td>
+            <span data-field="projects">${escapeHtml(reached)}</span>
+            <code data-field="roles">${escapeHtml(rolesText(member))}</code>
+          </td>
           <td data-field="seat">${member.seatBillable ? "paid" : "free"}</td>
           <td class="muted">${escapeHtml(when(member.joinedAt))}</td>
           <td class="row-actions">
@@ -442,27 +470,34 @@
             ? '<p class="muted">nobody matches</p>'
             : `<table>
                 <thead><tr>
-                  <th>member</th><th>role · status</th><th>presence</th>
-                  <th>projects</th><th>seat</th><th>joined</th><th></th>
+                  <th>member</th><th>access · admin · status</th><th>presence</th>
+                  <th>projects reached · roles</th><th>seat</th><th>joined</th><th></th>
                 </tr></thead>
                 <tbody>${members.map(memberRow).join("")}</tbody>
               </table>`;
       }
 
       /**
-       * Redraw a member from a change's answer ({ member }).
+       * Redraw a member from a change's answer ({ member }), or drop their
+       * row when the answer says they left ({ member: null, left: true }).
        *
        * @param {object} result
+       * @param {string} [userId] whose row to drop on a leave
        * @returns {void}
        */
-      function applyChangedMember(result) {
-        const changed = result.data?.member;
-        if (!result.ok || !changed) {
+      function applyChangedMember(result, userId) {
+        if (!result.ok) {
           return;
         }
-        members = members.map((member) =>
-          member.userId === changed.userId ? changed : member,
-        );
+        const changed = result.data?.member;
+        if (changed) {
+          members = members.map((member) =>
+            member.userId === changed.userId ? changed : member,
+          );
+          fillEditors(changed);
+        } else if (result.data?.left === true && userId) {
+          members = members.filter((member) => member.userId !== userId);
+        }
         renderMembers();
       }
 
@@ -474,19 +509,20 @@
           box.innerHTML = refusalText(result);
           return;
         }
-        const { member, reachableProjects } = result.data;
+        const { member, reachableProjectIds } = result.data;
         const rows = [
           ["name", member.name || "—"],
           ["email", member.email],
-          ["wsRole", member.wsRole],
+          ["admin", String(member.admin)],
+          ["accessLevel", member.accessLevel ?? "null"],
+          ["projectRoles", rolesText(member) || "none"],
           ["status", member.status],
           ["presence", member.presence],
-          ["projectAccess", access(member.projectAccess)],
           [
-            "reachableProjects",
-            Array.isArray(reachableProjects)
-              ? reachableProjects.join(", ")
-              : reachableProjects,
+            "reachableProjectIds",
+            Array.isArray(reachableProjectIds)
+              ? reachableProjectIds.join(", ")
+              : reachableProjectIds,
           ],
           ["seatBillable", String(member.seatBillable)],
           ["joinedAt", when(member.joinedAt)],
@@ -502,6 +538,27 @@
           .join("")}</table>`;
       }
 
+      /**
+       * Set the admin toggle and the role selects to what a member holds.
+       *
+       * @param {object} member
+       * @returns {void}
+       */
+      function fillEditors(member) {
+        byId("admin-toggle").checked = member.admin === true;
+        const held = new Map(
+          (member.projectRoles ?? []).map((entry) => [
+            entry.projectId,
+            entry.role,
+          ]),
+        );
+        document
+          .querySelectorAll("#project-roles-editor select[data-project-id]")
+          .forEach((select) => {
+            select.value = held.get(select.dataset.projectId) ?? "";
+          });
+      }
+
       async function selectMember(userId) {
         byId("member-id").value = userId;
         const result = await workspaceCall("GET", memberSuffix(userId));
@@ -509,6 +566,9 @@
           return undefined;
         }
         renderMemberDetail(result);
+        if (result.ok) {
+          fillEditors(result.data.member);
+        }
         return result;
       }
 
@@ -519,7 +579,102 @@
           {},
         );
         if (result !== undefined) {
-          applyChangedMember(result);
+          applyChangedMember(result, userId);
+        }
+        return result;
+      }
+
+      // --- admin flag and project roles ----------------------------------
+
+      /**
+       * The workspace's projects, drawn as one role select per project.
+       *
+       * @returns {Promise<object|undefined>}
+       */
+      async function loadProjects() {
+        const result = await workspaceCall("GET", "/projects?limit=100");
+        if (result === undefined) {
+          return undefined;
+        }
+        const editor = byId("project-roles-editor");
+        if (!result.ok) {
+          editor.innerHTML = refusalText(result);
+          return result;
+        }
+        projects = result.data.items;
+        editor.innerHTML =
+          projects.length === 0
+            ? '<p class="muted">no projects in this workspace</p>'
+            : `<table>
+                <thead><tr><th>project</th><th>role</th></tr></thead>
+                <tbody>${projects
+                  .map(
+                    (project) => `<tr data-project-id="${escapeHtml(
+                      project.projectId,
+                    )}">
+                      <td>${escapeHtml(project.name)}<code>${escapeHtml(
+                        project.projectId,
+                      )}</code></td>
+                      <td><select data-project-id="${escapeHtml(
+                        project.projectId,
+                      )}"><option value="">none</option>${PROJECT_ROLES.map(
+                        (role) => `<option>${role}</option>`,
+                      ).join("")}</select></td>
+                    </tr>`,
+                  )
+                  .join("")}</tbody>
+              </table>`;
+        const picked = members.find(
+          (member) => member.userId === byId("member-id").value.trim(),
+        );
+        if (picked) {
+          fillEditors(picked);
+        }
+        return result;
+      }
+
+      /**
+       * The editor's non-"none" choices as the API's projectRoles list.
+       *
+       * @returns {Array<{projectId: string, role: string}>}
+       */
+      function pickedProjectRoles() {
+        return [
+          ...document.querySelectorAll(
+            "#project-roles-editor select[data-project-id]",
+          ),
+        ]
+          .filter((select) => select.value !== "")
+          .map((select) => ({
+            projectId: select.dataset.projectId,
+            role: select.value,
+          }));
+      }
+
+      async function setAdmin(userId, admin) {
+        const suffix = `/admins/${encodeURIComponent(userId)}`;
+        const kept = pickedProjectRoles();
+        const result = admin
+          ? await workspaceCall("PUT", suffix, {})
+          : await workspaceCall(
+              "DELETE",
+              suffix,
+              kept.length === 0 ? {} : { projectRoles: kept },
+            );
+        if (result !== undefined) {
+          applyChangedMember(result, userId);
+        }
+        return result;
+      }
+
+      async function setProjectRoles(userId) {
+        const result = await workspaceCall(
+          "PUT",
+          memberSuffix(userId, "/project-roles"),
+          { projectRoles: pickedProjectRoles() },
+        );
+        if (result !== undefined) {
+          applyChangedMember(result, userId);
         }
         return result;
       }
@@ -538,10 +693,7 @@
             ? `free their paid seat — the organization then has ${count("seatsFreeAfter")} free`
             : `keep their seat (something else in the organization holds it, or it was free) — ${count("seatsFreeAfter")} free`,
           `drafts they own: ${count("draftsOwned")}`,
-          impact.isLastOwner
-            ? '<span class="warn">they are the owner — the removal will be refused (LAST_OWNER)</span>'
-            : null,
-        ].filter((line) => line !== null);
+        ];
       }
 
       async function checkImpact(userId) {
@@ -647,7 +799,7 @@
                 )}</td></tr>`,
             )
             .join("")}
-          <tr><th>byRole</th><td>${seats.byRole
+          <tr><th>byRole</th><td data-field="byRole">${(seats.byRole ?? [])
             .map(
               (segment) =>
                 `<span class="chip">${escapeHtml(segment.role)} ${escapeHtml(
@@ -656,7 +808,7 @@
             )
             .join(" ")}</td></tr>
           <tr><th>billableRoles</th><td>${escapeHtml(
-            seats.billableRoles.join(", "),
+            (seats.billableRoles ?? []).join(", "),
           )}</td></tr>
         </table>`;
       }
@@ -737,41 +889,21 @@
         return userId === null ? undefined : selectMember(userId);
       });
 
-      onSubmit("role-form", async (values) => {
+      onSubmit("admin-form", () => {
         const userId = selectedMemberId();
         if (userId === null) {
           return undefined;
         }
-        const result = await workspaceCall("PATCH", memberSuffix(userId), {
-          wsRole: values.wsRole,
-        });
-        if (result !== undefined) {
-          applyChangedMember(result);
-        }
-        return result;
+        return setAdmin(userId, byId("admin-toggle").checked);
       });
 
-      onSubmit("access-form", async (values) => {
+      byId("load-projects").addEventListener("click", (event) =>
+        withButton(event.currentTarget, () => loadProjects()),
+      );
+
+      onSubmit("roles-form", () => {
         const userId = selectedMemberId();
-        if (userId === null) {
-          return undefined;
-        }
-        const body = { mode: values.mode };
-        if (values.mode === "LIMITED") {
-          body.projectIds = values.projectIds
-            .split(",")
-            .map((id) => id.trim())
-            .filter((id) => id !== "");
-        }
-        const result = await workspaceCall(
-          "PATCH",
-          memberSuffix(userId, "/project-access"),
-          body,
-        );
-        if (result !== undefined) {
-          applyChangedMember(result);
-        }
-        return result;
+        return userId === null ? undefined : setProjectRoles(userId);
       });
 
       for (const verb of ["suspend", "reactivate"]) {
@@ -832,12 +964,16 @@
       // A new workspace: forget the old one's state and load its members.
       onWorkspaceChange(async (workspace) => {
         members = [];
+        projects = [];
         nextCursor = null;
         byId("next-page").hidden = true;
         for (const id of ["member-detail", "impact", "seats", "presence"]) {
           byId(id).innerHTML = "";
         }
+        byId("project-roles-editor").innerHTML =
+          '<p class="muted">press "load projects"</p>';
         byId("member-id").value = "";
+        byId("admin-toggle").checked = false;
         if (workspace === null) {
           byId("members-table").innerHTML =
             '<p class="muted">no workspace picked</p>';

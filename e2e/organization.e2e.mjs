@@ -75,14 +75,20 @@ async function memberRole(page, email) {
  *
  * @param {object} owner who invites
  * @param {string} workspaceId
+ * @param {string} projectId the one project they are placed on
  * @param {object} invitee
- * @param {string} wsRole
+ * @param {string} role EDITOR or READER on the project
  * @returns {Promise<void>}
  */
-async function joinWorkspace(owner, workspaceId, invitee, wsRole) {
+async function joinWorkspace(owner, workspaceId, projectId, invitee, role) {
   const sent = await owner.context.request.post(
     `${API}/workspaces/${workspaceId}/invites`,
-    { data: { recipients: [invitee.email], wsRole: wsRole } },
+    {
+      data: {
+        recipients: [invitee.email],
+        projectRoles: [{ projectId: projectId, role: role }],
+      },
+    },
   );
   const sentBody = await sent.json();
   assert.equal(sentBody.status, 201, `invite ${invitee.email}`);
@@ -267,17 +273,24 @@ async function openPage(page) {
     );
 
     const [mia, adam, hal] = await step(
-      "three people join the workspace (setup through the API)",
+      "three people join the workspace on one project (setup through the API)",
       async () => {
+        const made = await olga.context.request.post(
+          `${API}/workspaces/${workspaceId}/projects`,
+          { data: { appId: "affify", name: "Lab project" } },
+        );
+        const project = await made.json();
+        assert.equal(project.status, 201, "create the project");
+        const projectId = project.result.data.projectId;
         const joined = [];
-        for (const [label, wsRole] of [
+        for (const [label, role] of [
           ["Mia", "EDITOR"],
-          ["Adam", "VIEWER"],
-          ["Hal", "VIEWER"],
+          ["Adam", "READER"],
+          ["Hal", "READER"],
         ]) {
           const someone = await person(run, label);
           people.push(someone);
-          await joinWorkspace(olga, workspaceId, someone, wsRole);
+          await joinWorkspace(olga, workspaceId, projectId, someone, role);
           joined.push(someone);
         }
         return joined;

@@ -75,7 +75,7 @@ from `public/app`; `e2e/app-auth.e2e.mjs` and `e2e/app-me.e2e.mjs` drive them th
   `/accept-invite?token=` and `/login` are served by the app (`APP_LINK_PATHS` in `server.js`);
   `main.js` turns each into its hash route. The bare API testers moved to `<path>-tester`
   (`/reset-password-tester` and so on), and the inbox shows a "tester →" link beside each link.
-- **Confirm it's you** (`lib/identity.js`): before archive or an ownership handover, a password,
+- **Confirm it's you** (`lib/identity.js`): before archive (ownership handover is gone, see below), a password,
   an authenticator code, or an emailed code (`/auth/identity/send-code`).
 - On a local API, the pages that ask for mail (forgot, magic link, send-code) offer the link or
   code from the dev inbox, as the verify page already did.
@@ -344,9 +344,9 @@ response panel on the right. Every page that acts on a workspace also has the **
 | `/invite#<token>` | the mailed workspace invite; opens the app's invite page (see "The invite flow") |
 | `/invite-tester#<token>` | the same token on the tester: look it up, then accept signed in, accept by signing up, or decline |
 | `/verify-email-tester`, `/reset-password-tester`, `/magic-link-tester`, `/accept-invite-tester` | the old bare testers for the four emailed links; the real paths open the app |
-| `/members` | the list and its filters, one member, role, project access, suspend and reactivate, removal impact then remove, leave, seats, presence |
-| `/ownership` | offer (after a step-up, typing the name), withdraw, accept from `/ownership#<token>`, and the org owner's rescue |
-| `/projects` | list, create, read, rename, archive; can send an API token instead of the cookie |
+| `/members` | the list and its filters, one member, the admin flag (PUT/DELETE `…/admins/:userId`), project roles (PUT `…/project-roles`), suspend and reactivate, removal impact then remove, leave, seats, presence |
+| `/ownership` | retired on 2026-10-25: a note and a link to `/members` |
+| `/projects` | list, create, read, rename, archive, and a project's people (list, place or change at EDITOR/READER, remove, invite into the project); can send an API token instead of the cookie |
 | `/billing` | plans, the organization's billing, a plan change with its `Idempotency-Key`, extra seats |
 | `/tokens` | mint (the secret shows once), try it as a bearer, the rate limit, revoke |
 | `/webhooks` | the event and variable catalogue, endpoints, test, deliveries, redeliver, rotate the secret, edit, delete |
@@ -355,6 +355,14 @@ response panel on the right. Every page that acts on a workspace also has the **
 **Coverage:** every route in `backend/wiki/docs/*.docs.wiki.js` can be called from some page. That is 117
 routes; health and sample are left out on purpose. This was last checked on 29 September 2026. When a route is
 added to the docs, add it to the page it belongs to.
+
+**The role model (2026-10-25):** the API was rewritten for project-level roles
+(`docs/design-doc/rbac-simple-roles-design.md`). An organization has `OWNER` and `MEMBER`. A workspace member
+carries `admin: true|false` and `projectRoles: [{ projectId, role: EDITOR|READER }]`; `accessLevel` is what that
+resolves to (`ADMIN`, `EDITOR` or `READER`). An invitation grants either `admin: true` or `projectRoles`, never
+both; accepting answers `{ workspaceId, accessLevel }`. Gone: `wsRole`, `projectAccess` (ALL/LIMITED), the
+`OWNER/ADMIN/EDITOR/CREATOR/VIEWER` workspace roles, `PATCH …/members/:userId`, `…/project-access`, project
+visibility, and every ownership-transfer route. The pages and e2e scripts here follow that model.
 
 ## The e2e checks
 
@@ -401,11 +409,12 @@ sleeps, the API's heartbeat sees the long pause and kills the API, and every run
 | `auth-core`, `auth-extras`, `auth-invites` | the auth pages: account, two-factor, sessions, edge cases, Google, organization invites, the inbox |
 | `organization`, `workspace`, `me` | the pages of the same name |
 | `invitations` | `/invitations` and `/invite-tester`, for every way an invitee answers |
-| `members`, `ownership` | the pages of the same name, including the rescue |
+| `members` | the page of the same name: the admin flag, project roles, suspend, remove, leave |
+| `ownership` | the retired page shows its note, and the removed routes answer nothing |
 | `projects-billing-audit` | those three pages, with plan limits, the downgrade block, and the audit plan gate |
 | `tokens-webhooks` | those two pages, with a minted token used as a bearer |
 | `flow` | `/flow` from a brand-new account: No-workspace, create, onboarding, Apps home, a project, an invite that the invitee accepts on their own `/flow`, and a rename |
-| `whole-flow` | one journey through the pages: sign up, workspace, invites, members, a token, a webhook, audit, handover, archive and restore, leaving |
+| `whole-flow` | one journey through the pages: sign up, workspace, invites, members, a token, a webhook, audit, archive and restore, leaving |
 | `wiki` | the wiki's live tester (on `:4002`), not this harness |
 | `app` | the workspace app at `/` through the UI only: sign up, welcome, onboarding, projects, members, settings, three invitees joining (from the mailed link after signing up, from the banner in their own workspace, from the welcome screen), the bell |
 | `pages` | pages through the UI: the list, a page from a template, an edit in the GrapesJS canvas that autosaves, publish and versions, the preview tab, SEO settings, archive, restore and delete |

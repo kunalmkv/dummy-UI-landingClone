@@ -88,14 +88,14 @@ async function openLink(page, token) {
  * Fill the send form and press send.
  *
  * @param {object} page on /invitations
- * @param {object} fields recipients (array), role, access, projectIds, message, key
+ * @param {object} fields recipients (array), admin (boolean), projectRoles
+ *   ("id:ROLE, …" text), message, key
  * @returns {Promise<{status: number|null, text: string}>}
  */
 async function sendThroughForm(page, fields) {
   await page.fill("#send-recipients", fields.recipients.join("\n"));
-  await page.selectOption("#send-role", fields.role);
-  await page.selectOption("#send-access", fields.access ?? "");
-  await page.fill("#send-project-ids", fields.projectIds ?? "");
+  await page.setChecked("#send-admin", fields.admin === true);
+  await page.fill("#send-project-roles", fields.projectRoles ?? "");
   await page.fill("#send-message", fields.message ?? "");
   await page.fill("#send-key", fields.key ?? "");
   return act(page, () => page.click("#send-btn"));
@@ -149,7 +149,7 @@ function inviteRow(page, email) {
         "#send-recipients",
         [ninaEmail, owner.email, "not-an-address"].join("\n"),
       );
-      await page.selectOption("#send-role", "EDITOR");
+      await page.fill("#send-project-roles", `${projectId}:EDITOR`);
       assertOk(await act(page, () => page.click("#preview-btn")), "preview");
       const outcome = await page.locator("#send-outcome").innerText();
       assert.match(outcome, /nothing was sent/);
@@ -158,40 +158,53 @@ function inviteRow(page, email) {
       assert.match(outcome, /wouldConsume 1/);
     });
 
-    await step("an OWNER invitation is refused, and says so", async () => {
+    await step(
+      "an invitation with neither admin nor a project role is refused, and says so",
+      async () => {
+        const shown = await sendThroughForm(page, { recipients: [ninaEmail] });
+        assert.equal(shown.status, 400, shown.text);
+        assert.match(
+          await page.locator("#response-panel .error-line").innerText(),
+          /INVALID_REQUEST/,
+        );
+        assert.match(
+          await page.locator("#send-outcome .refusal").innerText(),
+          /refused/,
+        );
+      },
+    );
+
+    await step("admin together with a project role is refused too", async () => {
       const shown = await sendThroughForm(page, {
         recipients: [ninaEmail],
-        role: "OWNER",
+        admin: true,
+        projectRoles: `${projectId}:EDITOR`,
       });
       assert.equal(shown.status, 400, shown.text);
       assert.match(
         await page.locator("#response-panel .error-line").innerText(),
         /INVALID_REQUEST/,
       );
-      assert.match(
-        await page.locator("#send-outcome .refusal").innerText(),
-        /wsRole must be ADMIN, EDITOR or VIEWER/,
-      );
     });
 
     let ninaInviteId = null;
     await step(
-      "send Nina an EDITOR invitation limited to one project, with a message and an Idempotency-Key",
+      "send Nina an EDITOR invitation on one project, with a message and an Idempotency-Key",
       async () => {
         assertOk(
           await act(page, () => page.click("#list-projects")),
           "list projects",
         );
-        await page.click(`[data-add-project="${projectId}"]`);
-        assert.equal(await page.inputValue("#send-project-ids"), projectId);
-        assert.equal(await page.inputValue("#send-access"), "LIMITED");
+        await page.click(`[data-add-project="${projectId}"][data-role="EDITOR"]`);
+        assert.equal(
+          await page.inputValue("#send-project-roles"),
+          `${projectId}:EDITOR`,
+        );
         await page.click("#new-key");
         const key = await page.inputValue("#send-key");
         const shown = await sendThroughForm(page, {
           recipients: [ninaEmail],
-          role: "EDITOR",
-          access: "LIMITED",
-          projectIds: projectId,
+          projectRoles: `${projectId}:EDITOR`,
           message: "Welcome to the lab",
           key: key,
         });
@@ -227,11 +240,11 @@ function inviteRow(page, email) {
     );
 
     await step(
-      "send Ivan, Mia and Rex VIEWER invitations in one batch",
+      "send Ivan, Mia and Rex READER invitations on the project in one batch",
       async () => {
         const shown = await sendThroughForm(page, {
           recipients: [ivan.email, mia.email, rexEmail],
-          role: "VIEWER",
+          projectRoles: `${projectId}:READER`,
         });
         assert.equal(shown.status, 201, shown.text);
         assert.equal(
@@ -273,15 +286,14 @@ function inviteRow(page, email) {
 
     let rexToken = null;
     await step(
-      "change Rex's role, resend, copy the link and edit the message",
+      "make Rex's invitation an admin one, resend, copy the link and edit the message",
       async () => {
         const rex = inviteRow(page, rexEmail);
-        await rex.locator("[data-role-select]").selectOption("EDITOR");
         assertOk(
-          await act(page, () => rex.locator('[data-action="role"]').click()),
-          "change role",
+          await act(page, () => rex.locator('[data-action="admin"]').click()),
+          "make admin",
         );
-        await rex.locator(".role-cell", { hasText: "EDITOR" }).waitFor();
+        await rex.locator(".access-cell", { hasText: "ADMIN" }).waitFor();
 
         assertOk(
           await act(page, () => rex.locator('[data-action="resend"]').click()),
@@ -312,6 +324,17 @@ function inviteRow(page, email) {
           await act(page, () => page.click("#edit-form button[type=submit]")),
           "edit the message",
         );
+        // Back to a project role: admin false needs roles left.
+        await page.selectOption("#edit-message-mode", "");
+        await page.selectOption("#edit-admin", "false");
+        await page.fill("#edit-project-roles", `${projectId}:READER`);
+        assertOk(
+          await act(page, () => page.click("#edit-form button[type=submit]")),
+          "edit the roles",
+        );
+        await rex.locator(".access-cell", { hasText: "READER" }).waitFor();
+        await page.selectOption("#edit-admin", "");
+        await page.fill("#edit-project-roles", "");
       },
     );
 
@@ -382,7 +405,7 @@ function inviteRow(page, email) {
     await step("the owner invites Ivan and Mia again", async () => {
       const shown = await sendThroughForm(page, {
         recipients: [ivan.email, mia.email],
-        role: "VIEWER",
+        projectRoles: `${projectId}:READER`,
       });
       assert.equal(shown.status, 201, shown.text);
     });
@@ -397,7 +420,7 @@ function inviteRow(page, email) {
       );
       assert.match(
         await ivan.page.locator("#outcome").innerText(),
-        new RegExp(`joined workspace\\s+${workspaceId}\\s+as\\s+VIEWER`),
+        new RegExp(`joined workspace\\s+${workspaceId}\\s+as\\s+READER`),
       );
     });
 

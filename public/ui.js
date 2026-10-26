@@ -229,7 +229,6 @@ const NAV_PAGES = [
   ["/workspace", "workspace"],
   ["/invitations", "invitations"],
   ["/members", "members"],
-  ["/ownership", "ownership"],
   ["/projects", "projects"],
   ["/billing", "billing"],
   ["/tokens", "api tokens"],

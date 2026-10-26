@@ -340,9 +340,9 @@
             </label>
             <div class="row">
               <label>
-                role
-                <select name="wsRole" id="invite-role">
-                  <option>ADMIN</option><option selected>EDITOR</option><option>VIEWER</option>
+                access — admin, or a role on the project from step 6
+                <select name="access" id="invite-role">
+                  <option value="ADMIN">ADMIN — every project</option><option value="EDITOR" selected>EDITOR on the project</option><option value="READER">READER on the project</option>
                 </select>
               </label>
             </div>
@@ -384,7 +384,7 @@
           <p class="deeper">
             <a href="/workspace">workspace</a><a href="/members">members</a
             ><a href="/invitations">invitations</a
-            ><a href="/projects">projects</a><a href="/ownership">ownership</a
+            ><a href="/projects">projects</a
             ><a href="/billing">billing</a><a href="/tokens">api tokens</a
             ><a href="/webhooks">webhooks</a><a href="/audit">audit log</a
             ><a href="/organization">organizations</a>
@@ -689,7 +689,7 @@
             ${invites.map((invite) => `<tr>
               <td>${plain(invite.workspaceName)}</td>
               <td>${plain(invite.invitedBy?.name)}</td>
-              <td>${plain(invite.role)}</td>
+              <td>${plain(accessOf(invite))}</td>
               <td>${plain(invite.expiresAt?.slice(0, 10))}</td>
               <td><button type="button" data-accept="${escapeHtml(invite.inviteId)}" data-name="${escapeHtml(invite.workspaceName)}">accept</button>
                   <button type="button" data-decline="${escapeHtml(invite.inviteId)}">decline</button></td>
@@ -699,8 +699,8 @@
             button.addEventListener("click", async () => {
               const accepted = await run("POST", "/me/invites/:inviteId/accept", { params: { inviteId: button.dataset.accept } });
               if (accepted.ok) {
-                openWorkspace({ id: accepted.data.workspaceId, orgId: null, name: button.dataset.name, role: accepted.data.role });
-                setOut("invites", `<p class="good">✓ joined ${plain(button.dataset.name)} as ${plain(accepted.data.role)} — opening it</p>`);
+                openWorkspace({ id: accepted.data.workspaceId, orgId: null, name: button.dataset.name, role: accepted.data.accessLevel });
+                setOut("invites", `<p class="good">✓ joined ${plain(button.dataset.name)} as ${plain(accepted.data.accessLevel)} — opening it</p>`);
                 focusStep("step-home");
                 await STEPS.home();
               } else {
@@ -799,7 +799,7 @@
             : refusal(seats)}
             ${members.ok
               ? `<table><tr><th>member</th><th>role</th><th>status</th><th>presence</th></tr>${items
-                  .map((one) => `<tr><td>${plain(one.name)} <span class="muted">${plain(one.email)}</span></td><td>${plain(one.wsRole)}</td><td>${plain(one.status)}</td><td>${plain(one.presence)}</td></tr>`)
+                  .map((one) => `<tr><td>${plain(one.name)} <span class="muted">${plain(one.email)}</span></td><td>${plain(one.accessLevel)}${one.admin ? " · admin" : ""}</td><td>${plain(one.status)}</td><td>${plain(one.presence)}</td></tr>`)
                   .join("")}</table>${members.data?.nextCursor ? '<p class="muted">more on the next page — the members page pages through them</p>' : ""}`
               : refusal(members)}`);
         },
@@ -944,17 +944,24 @@
         return undefined;
       });
 
+      // Either the admin flag or one role on the project of step 6 — never both.
       function inviteBody(form) {
         const values = Object.fromEntries(new FormData(form).entries());
-        return {
-          recipients: values.recipients.split(/[\s,;]+/).map((one) => one.trim()).filter(Boolean),
-          wsRole: values.wsRole,
-        };
+        const body = { recipients: values.recipients.split(/[\s,;]+/).map((one) => one.trim()).filter(Boolean) };
+        if (values.access === "ADMIN") {
+          body.admin = true;
+        } else {
+          body.projectRoles = [{ projectId: state.projectId, role: values.access }];
+        }
+        return body;
+      }
+
+      function accessOf(one) {
+        return one.admin ? "ADMIN" : (one.projectRoles ?? []).map((entry) => entry.role).join(", ");
       }
 
       document.getElementById("invite-preview").addEventListener("click", async () => {
-        const { recipients, wsRole } = inviteBody(document.getElementById("invite-form"));
-        const result = await run("POST", "/workspaces/:workspaceId/invites/preview", { body: { recipients, wsRole } });
+        const result = await run("POST", "/workspaces/:workspaceId/invites/preview", { body: inviteBody(document.getElementById("invite-form")) });
         setOut("team", result.ok
           ? kv([
               ["will invite", plain((result.data.valid ?? []).join(", ") || "nobody")],
@@ -971,7 +978,7 @@
       onSubmit("invite-form", async (values, form) => {
         const result = await run("POST", "/workspaces/:workspaceId/invites", { body: inviteBody(form) });
         setOut("team", result.ok
-          ? `<p class="good">✓ sent ${plain((result.data.invites ?? []).map((one) => `${one.email} as ${one.wsRole}`).join(", ") || "nothing new")}</p>
+          ? `<p class="good">✓ sent ${plain((result.data.invites ?? []).map((one) => `${one.email} as ${accessOf(one)}`).join(", ") || "nothing new")}</p>
              ${(result.data.alreadyInvited ?? []).length ? `<p class="muted">already invited: ${plain(result.data.alreadyInvited.join(", "))}</p>` : ""}`
           : refusal(result));
         return undefined;
@@ -982,7 +989,7 @@
         const items = result.data?.items ?? [];
         setOut("team", result.ok
           ? `<table><tr><th>email</th><th>role</th><th>status</th><th>expires</th></tr>${items
-              .map((one) => `<tr><td>${plain(one.email)}</td><td>${plain(one.wsRole)}</td><td>${plain(one.status)}${one.isExpired ? ' <span class="warn">expired</span>' : ""}</td><td>${plain(one.expiresAt?.slice(0, 10))}</td></tr>`)
+              .map((one) => `<tr><td>${plain(one.email)}</td><td>${plain(accessOf(one))}</td><td>${plain(one.status)}${one.isExpired ? ' <span class="warn">expired</span>' : ""}</td><td>${plain(one.expiresAt?.slice(0, 10))}</td></tr>`)
               .join("")}</table>`
           : refusal(result));
       });

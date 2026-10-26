@@ -1,5 +1,6 @@
-// The members page: the list and its filters, one member, role, project
-// access, suspension, removal after its impact, leaving, seats and presence.
+// The members page: the list and its filters, one member, the admin flag,
+// project roles, suspension, removal after its impact, leaving, seats and
+// presence.
 import assert from "node:assert/strict";
 
 import {
@@ -32,14 +33,15 @@ async function setup(who, method, path, data) {
 }
 
 /**
- * Invite someone into a workspace and accept it as them.
+ * Invite someone onto one project of a workspace and accept it as them.
  *
+ * @param {string} role EDITOR or READER on the project
  * @returns {Promise<void>}
  */
-async function join(inviter, workspaceId, joiner, wsRole) {
+async function join(inviter, workspaceId, projectId, joiner, role) {
   await setup(inviter, "POST", `/workspaces/${workspaceId}/invites`, {
     recipients: [joiner.email],
-    wsRole: wsRole,
+    projectRoles: [{ projectId: projectId, role: role }],
   });
   const invite = await mail(joiner.email, "WORKSPACE_INVITE");
   await setup(joiner, "POST", "/invites/accept", {
@@ -73,7 +75,7 @@ async function errorLine(page) {
     const vic = await step("Vic signs up", () => person(run, "Vic"));
 
     const { workspaceId, projectId, olgaId } = await step(
-      "Olga makes a workspace with a project; Eve (EDITOR) and Vic (VIEWER) join",
+      "Olga makes a workspace with a project; Eve (EDITOR) and Vic (READER) join it",
       async () => {
         const profile = await setup(olga, "GET", "/auth/profile/get");
         const created = await setup(
@@ -88,8 +90,8 @@ async function errorLine(page) {
           `/workspaces/${created.workspaceId}/projects`,
           { appId: "affify", name: "Spring leads" },
         );
-        await join(olga, created.workspaceId, eve, "EDITOR");
-        await join(olga, created.workspaceId, vic, "VIEWER");
+        await join(olga, created.workspaceId, project.projectId, eve, "EDITOR");
+        await join(olga, created.workspaceId, project.projectId, vic, "READER");
         // Seen, so her presence dot is ONLINE.
         await setup(olga, "POST", `/workspaces/${created.workspaceId}/visit`);
         return {
@@ -119,19 +121,27 @@ async function errorLine(page) {
         assert.equal(await table.locator("tbody tr").count(), 3);
         assert.match(await fieldOf(olga, "presence"), /ONLINE/);
         assert.match(await fieldOf(vic, "presence"), /OFFLINE/);
-        assert.equal(await fieldOf(eve, "role"), "EDITOR");
+        assert.equal(await fieldOf(eve, "access"), "EDITOR");
+        assert.equal(await fieldOf(eve, "admin"), "not admin");
+        assert.match(await fieldOf(eve, "roles"), new RegExp(`EDITOR on ${projectId}`));
+        assert.equal(await fieldOf(vic, "access"), "READER");
         assert.equal(await fieldOf(eve, "seat"), "paid");
         assert.equal(await fieldOf(vic, "seat"), "free");
         return rowOf(eve).getAttribute("data-user-id");
       },
     );
 
-    await step("the role filter narrows the list to Eve", async () => {
-      await page.selectOption('#list-form select[name="role"]', "EDITOR");
-      assertOk(await act(page, () => page.click(listButton)), "filter");
+    await step("the admin filter leaves out the placed people; q narrows to Eve", async () => {
+      await page.selectOption('#list-form select[name="admin"]', "true");
+      assertOk(await act(page, () => page.click(listButton)), "admin filter");
+      assert.equal(await rowOf(eve).count(), 0);
+      assert.equal(await rowOf(vic).count(), 0);
+      await page.selectOption('#list-form select[name="admin"]', "");
+      await page.fill('#list-form input[name="q"]', "Eve");
+      assertOk(await act(page, () => page.click(listButton)), "q filter");
       assert.equal(await table.locator("tbody tr").count(), 1);
       assert.equal(await rowOf(eve).count(), 1);
-      await page.selectOption('#list-form select[name="role"]', "");
+      await page.fill('#list-form input[name="q"]', "");
     });
 
     await step(
@@ -155,34 +165,73 @@ async function errorLine(page) {
       assert.equal(await page.inputValue("#member-id"), eveId);
       assert.equal(
         await page
-          .locator('#member-detail [data-field="reachableProjects"]')
+          .locator('#member-detail [data-field="reachableProjectIds"]')
           .innerText(),
-        "ALL",
+        projectId,
+      );
+      assert.equal(
+        await page.locator('#member-detail [data-field="admin"]').innerText(),
+        "false",
       );
     });
 
-    await step("Eve is raised to ADMIN", async () => {
-      await page.selectOption('#role-form select[name="wsRole"]', "ADMIN");
+    const roleSelect = `#project-roles-editor select[data-project-id="${projectId}"]`;
+
+    await step("the project-roles editor lists the project at Eve's role", async () => {
+      assertOk(await act(page, () => page.click("#load-projects")), "projects");
+      assert.equal(await page.inputValue(roleSelect), "EDITOR");
+    });
+
+    await step("Eve is made an admin: she reaches every project", async () => {
+      await page.check("#admin-toggle");
       assertOk(
-        await act(page, () => page.click('#role-form button[type="submit"]')),
-        "role",
+        await act(page, () => page.click('#admin-form button[type="submit"]')),
+        "make admin",
       );
-      assert.equal(await fieldOf(eve, "role"), "ADMIN");
+      assert.equal(await fieldOf(eve, "access"), "ADMIN");
+      assert.equal(await fieldOf(eve, "admin"), "admin");
+      assert.match(await fieldOf(eve, "roles"), /every project/);
+      // Her project roles were cleared, and the editor says so.
+      assert.equal(await page.inputValue(roleSelect), "");
+    });
+
+    await step("setting project roles on an admin is refused", async () => {
+      await page.selectOption(roleSelect, "READER");
+      const refused = await act(page, () =>
+        page.click('#roles-form button[type="submit"]'),
+      );
+      assert.equal(refused.status, 400);
+      assert.match(await errorLine(page), /INVALID_REQUEST/);
     });
 
     await step(
-      "Eve is limited to one project, then given all again",
+      "the flag is taken away, keeping her as READER on the project",
       async () => {
-        const submit = () => page.click('#access-form button[type="submit"]');
-        await page.selectOption('#access-form select[name="mode"]', "LIMITED");
-        await page.fill('#access-form input[name="projectIds"]', projectId);
-        assertOk(await act(page, submit), "limited");
-        assert.equal(await fieldOf(eve, "access"), "LIMITED 1/1");
-        await page.selectOption('#access-form select[name="mode"]', "ALL");
-        assertOk(await act(page, submit), "all");
-        assert.equal(await fieldOf(eve, "access"), "ALL 1/1");
+        await page.uncheck("#admin-toggle");
+        assertOk(
+          await act(page, () => page.click('#admin-form button[type="submit"]')),
+          "unmake admin",
+        );
+        assert.match(
+          await page.locator("#response-panel").textContent(),
+          /"left": false/,
+        );
+        assert.equal(await fieldOf(eve, "access"), "READER");
+        assert.equal(await fieldOf(eve, "admin"), "not admin");
+        assert.equal(await fieldOf(eve, "seat"), "free");
       },
     );
+
+    await step("project roles make her an EDITOR again", async () => {
+      await page.selectOption(roleSelect, "EDITOR");
+      assertOk(
+        await act(page, () => page.click('#roles-form button[type="submit"]')),
+        "project roles",
+      );
+      assert.equal(await fieldOf(eve, "access"), "EDITOR");
+      assert.match(await fieldOf(eve, "roles"), new RegExp(`EDITOR on ${projectId}`));
+      assert.equal(await fieldOf(eve, "seat"), "paid");
+    });
 
     await step(
       "Eve is suspended and locked out, then reactivated",
@@ -224,7 +273,7 @@ async function errorLine(page) {
         await page.locator('#seats [data-field="plan"]').innerText(),
         "free",
       );
-      // Olga and Eve; Vic is a free VIEWER.
+      // Olga and Eve; Vic is a free READER.
       assert.equal(
         await page.locator('#seats [data-field="seatsUsed"]').innerText(),
         "2",
@@ -245,9 +294,11 @@ async function errorLine(page) {
     await step(
       "the removal impact says Eve's pending invitation needs a new owner",
       async () => {
+        // Only an admin may invite, so Eve gets the flag back first.
+        await setup(olga, "PUT", `/workspaces/${workspaceId}/admins/${eveId}`);
         await setup(eve, "POST", `/workspaces/${workspaceId}/invites`, {
           recipients: [`${run.prefix}-guest@example.com`],
-          wsRole: "VIEWER",
+          projectRoles: [{ projectId: projectId, role: "READER" }],
         });
         assertOk(
           await act(page, () =>
@@ -283,13 +334,19 @@ async function errorLine(page) {
       },
     );
 
-    await step("Olga cannot leave while Vic is still here", async () => {
-      const refused = await act(page, () =>
-        page.click('#leave-form button[type="submit"]'),
-      );
-      assert.equal(refused.status, 409);
-      assert.match(await errorLine(page), /LAST_OWNER/);
-    });
+    await step(
+      "Olga, the Owner, may leave and still reaches it through the organization",
+      async () => {
+        assertOk(
+          await act(page, () =>
+            page.click('#leave-form button[type="submit"]'),
+          ),
+          "leave",
+        );
+        assert.match(await page.locator("#members-table").innerText(), /you left/);
+        assert.equal(await workspaceStatusFor(olga, workspaceId), 200);
+      },
+    );
 
     await step("Vic leaves from his own page", async () => {
       await vic.page.goto(`${HARNESS}/members`);

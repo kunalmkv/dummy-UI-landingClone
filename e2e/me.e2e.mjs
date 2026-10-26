@@ -61,8 +61,12 @@ async function createWorkspace(owner, name) {
   return created.result.data.workspaceId;
 }
 
+// One project per workspace, made on first use: an invitee needs a role on one.
+const projectOf = new Map();
+
 /**
- * Invite someone as a VIEWER and accept the mailed link as them.
+ * Invite someone as a READER on the workspace's project and accept the
+ * mailed link as them.
  *
  * @param {object} inviter
  * @param {string} workspaceId
@@ -70,11 +74,24 @@ async function createWorkspace(owner, name) {
  * @returns {Promise<void>}
  */
 async function inviteAndAccept(inviter, workspaceId, invitee) {
+  if (!projectOf.has(workspaceId)) {
+    const project = await send(
+      inviter,
+      "POST",
+      `/workspaces/${workspaceId}/projects`,
+      { appId: "affify", name: "Lab project" },
+    );
+    assert.equal(project.status, 201, `project: ${JSON.stringify(project)}`);
+    projectOf.set(workspaceId, project.result.data.projectId);
+  }
   const invited = await send(
     inviter,
     "POST",
     `/workspaces/${workspaceId}/invites`,
-    { recipients: [invitee.email], wsRole: "VIEWER" },
+    {
+      recipients: [invitee.email],
+      projectRoles: [{ projectId: projectOf.get(workspaceId), role: "READER" }],
+    },
   );
   assert.equal(invited.status, 201, `invite: ${JSON.stringify(invited)}`);
   const row = await mail(invitee.email, "WORKSPACE_INVITE");
@@ -198,7 +215,7 @@ async function loadFirstPage(page, status, limit) {
       const rows = page.locator("#workspaces tbody tr");
       assert.equal(await rows.count(), 2);
       assert.match(await rows.nth(0).innerText(), /Ada Studio[\s\S]*OWNER/);
-      assert.match(await rows.nth(1).innerText(), /Bob Bench[\s\S]*VIEWER/);
+      assert.match(await rows.nth(1).innerText(), /Bob Bench[\s\S]*READER/);
       assert.equal(await page.locator("#workspaces [data-last]").count(), 0);
     });
 

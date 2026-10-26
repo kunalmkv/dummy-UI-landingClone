@@ -714,7 +714,7 @@
         }
         const impact = result.data;
         const workspaces = impact.workspacesAffected
-          .map((workspace) => `${workspace.name ?? "—"} (${workspace.wsRole})`)
+          .map((workspace) => `${workspace.name ?? "—"} (${workspace.accessLevel})`)
           .join(", ");
         container.innerHTML = `
           ${

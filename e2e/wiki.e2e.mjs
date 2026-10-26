@@ -30,7 +30,12 @@ async function send(page, slug, fields = {}) {
     await card.locator("summary.ep-head").click();
   }
   for (const [key, value] of Object.entries(fields)) {
-    await page.locator(`#f-${slug}-${key}`).fill(value);
+    const field = page.locator(`#f-${slug}-${key}`);
+    if ((await field.evaluate((node) => node.tagName)) === "SELECT") {
+      await field.selectOption(value);
+    } else {
+      await field.fill(value);
+    }
   }
   const status = card.locator(".actions .status");
   await card.locator(".send").click();
@@ -158,17 +163,23 @@ async function curlOf(page, slug) {
     });
 
     await page.goto(`${WIKI}/#/invitations`);
-    await step("an invitation batch sends an array and an object", async () => {
+    await step("an invitation batch sends an array and a boolean", async () => {
       const slug = "post-workspaces-workspaceid-invites";
       const recipients = JSON.stringify([`${run.prefix}-grace@example.com`]);
+      // An admin invitation: the sample projectRoles name no project of this
+      // workspace, so they are left blank and the flag goes instead.
       assert.match(
-        await send(page, slug, { "body-recipients": recipients }),
+        await send(page, slug, {
+          "body-recipients": recipients,
+          "body-admin": "true",
+          "body-projectRoles": "",
+        }),
         /^201/,
       );
       const curl = await curlOf(page, slug);
       assert.ok(curl.includes(`"recipients":${recipients}`), curl);
-      assert.ok(curl.includes('"wsRole":"EDITOR"'), curl);
-      assert.ok(curl.includes('"projectAccess":{"mode":"ALL"}'), curl);
+      assert.ok(curl.includes('"admin":true'), curl);
+      assert.ok(!curl.includes('"projectRoles"'), curl);
     });
 
     // Before the token: its capture fills the webhook card's Authorization.

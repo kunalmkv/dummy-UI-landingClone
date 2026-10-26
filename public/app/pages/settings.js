@@ -647,18 +647,11 @@ async function danger(target, id) {
   const workspace = state.workspace;
   const role = roleIn(id);
   const archived = workspace.status !== "ACTIVE";
-  const canTransfer = can("workspace.transfer");
   const canArchive = can("workspace.archive");
-  const offer = canTransfer && !archived ? await get(ws(id, "/ownership-transfer")) : null;
-  const pending = offer?.ok ? offer.data?.pending ?? null : null;
   mount(
     target,
     html`<div class="card danger-card">
       <div class="card-head"><div><h2>Danger zone</h2><p>Changes here are hard to undo.</p></div></div>
-      ${canTransfer && !archived
-        ? html`<div class="danger-row"><div><h3>Hand over ownership</h3><p>${pending ? html`Waiting for <strong>${pending.toUser?.name}</strong> (${pending.toUser?.email}) to accept — the offer expires ${timeAgo(pending.expiresAt)}.` : "Make another member the owner. You'll become an admin once they accept."}</p></div>
-            ${pending ? html`<button class="btn" data-withdraw>Withdraw offer</button>` : html`<button class="btn" data-transfer>Hand over…</button>`}</div>`
-        : ""}
       ${canArchive
         ? html`<div class="danger-row"><div><h3>${archived ? "Restore workspace" : "Archive workspace"}</h3><p>${archived ? "Bring it back to normal. Members get their access back." : "Make everything read-only and free its seats. You can restore it later."}</p></div>
             ${archived ? html`<button class="btn" data-restore>Restore</button>` : html`<button class="btn btn-danger" data-archive>Archive…</button>`}</div>`
@@ -666,57 +659,9 @@ async function danger(target, id) {
       ${role !== "OWNER"
         ? html`<div class="danger-row"><div><h3>Leave workspace</h3><p>You'll lose access until someone invites you again.</p></div><button class="btn btn-danger" data-leave>Leave</button></div>`
         : ""}
-      ${!canTransfer && !canArchive && role === "OWNER" ? emptyState({ iconName: "shield", title: "Nothing to do here", text: "" }) : ""}
+      ${!canArchive && role === "OWNER" ? emptyState({ iconName: "shield", title: "Nothing to do here", text: "" }) : ""}
     </div>`,
   );
-
-  target.querySelector("[data-withdraw]")?.addEventListener("click", (event) =>
-    busy(event.currentTarget, async () => {
-      const result = await del(ws(id, "/ownership-transfer"));
-      toast(result.ok ? "Offer withdrawn" : result.error, result.ok ? "success" : "error");
-      danger(target, id);
-    }),
-  );
-
-  target.querySelector("[data-transfer]")?.addEventListener("click", async () => {
-    const members = await get(ws(id, `/members${query({ status: "ACTIVE", limit: 100 })}`));
-    const options = (members.ok ? members.data.items ?? [] : []).filter((one) => one.userId !== state.user?.id && one.wsRole !== "OWNER");
-    openModal({
-      title: "Hand over ownership",
-      subtitle: "They get an email and become the owner once they accept.",
-      body: options.length === 0
-        ? html`<div class="modal-body">${emptyState({ iconName: "users", title: "No one to hand it to", text: "Invite someone first — the new owner must be a member." })}</div><div class="modal-foot"><button class="btn" data-close>Close</button></div>`
-        : html`<form class="modal-body form" novalidate>
-            <label class="field"><span>New owner</span><select name="toUserId">${options.map((one) => html`<option value="${one.userId}">${one.name || one.email} — ${one.email}</option>`)}</select></label>
-            <label class="field"><span>Type <strong>${workspace.name}</strong> to confirm</span><input type="text" name="confirmName" autocomplete="off" /></label>
-            ${proofFields()}
-          </form>
-          <div class="modal-foot"><button class="btn" data-close>Cancel</button><button class="btn btn-danger" data-submit>Send offer</button></div>`,
-      onMount: (modal, close) => {
-        const form = modal.querySelector("form");
-        wireProof(form, "WORKSPACE_OWNERSHIP_TRANSFER");
-        modal.querySelector("[data-submit]")?.addEventListener("click", (event) =>
-          busy(event.currentTarget, async () => {
-            setFormError(form, null);
-            const values = formValues(form);
-            const check = await confirmIdentity("WORKSPACE_OWNERSHIP_TRANSFER", readProof(form));
-            if (!check.ok) {
-              setFormError(form, check.error);
-              return;
-            }
-            const result = await post(ws(id, "/ownership-transfer"), { toUserId: values.toUserId, confirmName: values.confirmName });
-            if (!result.ok) {
-              setFormError(form, result.error);
-              return;
-            }
-            close();
-            toast(`Offer sent to ${result.data.toUser?.name ?? "them"}`);
-            danger(target, id);
-          }),
-        );
-      },
-    });
-  });
 
   target.querySelector("[data-archive]")?.addEventListener("click", () =>
     openModal({

@@ -102,7 +102,7 @@ function summary(invite) {
     <div><dt>Workspace</dt><dd>${invite.workspaceName}</dd></div>
     <div><dt>Organization</dt><dd>${invite.orgName ?? "—"}</dd></div>
     <div><dt>Invited by</dt><dd>${invite.inviterName ?? "—"}</dd></div>
-    <div><dt>Role</dt><dd>${roleChip(invite.wsRole)}</dd></div>
+    <div><dt>Access</dt><dd>${roleChip(invite.admin ? "ADMIN" : (invite.projectRoles ?? []).some((entry) => entry.role === "EDITOR") ? "EDITOR" : "READER")}${invite.admin ? "" : html` <span class="muted">on ${(invite.projectRoles ?? []).length} project${(invite.projectRoles ?? []).length === 1 ? "" : "s"}</span>`}</dd></div>
     <div><dt>Sent to</dt><dd>${invite.email}</dd></div>
     <div><dt>Expires</dt><dd>${timeAgo(invite.expiresAt)}</dd></div>
   </dl>`;

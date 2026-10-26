@@ -10,10 +10,16 @@ It has two parts, served by one small Node server:
   workspace the sidebar, projects, members and settings.
 - **The tester pages** at `/account`: one plain page per area (account,
   two-factor, sessions, org invites, edge cases, google, me, organizations,
-  workspace, invitations, members, ownership, projects, billing, api tokens,
+  workspace, invitations, members, projects, billing, api tokens,
   webhooks, audit log), linked from a shared top nav.
 
 `PLAN.md` has the full design and what each page covers.
+
+**Roles (2026-10-25):** the API moved to project-level roles. An organization
+has `OWNER` and `MEMBER`; a workspace has one role, the `admin` flag, and
+everyone else holds `projectRoles` (`EDITOR` or `READER` per project).
+`wsRole`, `projectAccess`, `VIEWER` and workspace ownership transfer are gone;
+`/ownership` is a retired page.
 
 ## Where it must live
 

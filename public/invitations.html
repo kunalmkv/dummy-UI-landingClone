@@ -97,9 +97,11 @@
       <div>
         <div id="workspace-picker"></div>
         <p class="note">
-          Sending, changing, resending, copying a link and revoking need
-          workspace <strong>ADMIN or OWNER</strong>; any member may read the
-          list. The panel shows the call you triggered; the lists refresh
+          Sending, changing, resending, copying a link, revoking and reading
+          the list need a workspace <strong>admin</strong> (the organization's
+          Owner counts as one). An invitation grants <strong>either</strong>
+          the admin flag <strong>or</strong> project roles — never both, never
+          neither. The panel shows the call you triggered; the lists refresh
           quietly after it. "My invitations" needs no workspace at all.
         </p>
 
@@ -107,38 +109,25 @@
           <h2>Invite — preview, then send</h2>
           <p class="hint">
             POST …/invites/preview changes nothing. POST …/invites answers 201
-            and is all or nothing. A VIEWER is free; ADMIN and EDITOR hold a
-            seat. ⚠️ 30 addresses an hour per workspace, spent even on an
-            idempotent retry.
+            and is all or nothing. An admin, or an EDITOR role on any project,
+            holds a seat; a READER-only invitation is free. Tick neither admin
+            nor a project role to watch the 400. ⚠️ 30 addresses an hour per
+            workspace, spent even on an idempotent retry.
           </p>
           <form id="send-form">
             <label>
               recipients — one per line, or separated by commas
               <textarea name="recipients" id="send-recipients"></textarea>
             </label>
+            <label class="checkbox">
+              <input type="checkbox" name="admin" id="send-admin" />
+              admin — every project; then no project roles are sent
+            </label>
             <div class="row">
               <label>
-                wsRole
-                <select name="wsRole" id="send-role">
-                  <option value="EDITOR">EDITOR</option>
-                  <option value="VIEWER">VIEWER</option>
-                  <option value="ADMIN">ADMIN</option>
-                  <option value="OWNER">OWNER — must be refused</option>
-                </select>
-              </label>
-              <label>
-                projectAccess
-                <select name="accessMode" id="send-access">
-                  <option value="">not sent (every project)</option>
-                  <option value="ALL">ALL</option>
-                  <option value="LIMITED">LIMITED — needs project ids</option>
-                </select>
-              </label>
-            </div>
-            <div class="row">
-              <label>
-                projectIds for LIMITED — separated by commas
-                <input type="text" name="projectIds" id="send-project-ids" />
+                projectRoles — projectId:EDITOR or projectId:READER, separated
+                by commas (a bare id means EDITOR)
+                <input type="text" name="projectRoles" id="send-project-roles" />
               </label>
               <button type="button" id="list-projects">list projects</button>
             </div>
@@ -202,27 +191,18 @@
             </label>
             <div class="row">
               <label>
-                wsRole
-                <select name="wsRole" id="edit-role">
+                admin
+                <select name="admin" id="edit-admin">
                   <option value="">leave as it is</option>
-                  <option value="ADMIN">ADMIN</option>
-                  <option value="EDITOR">EDITOR</option>
-                  <option value="VIEWER">VIEWER</option>
+                  <option value="true">true — drops the project roles</option>
+                  <option value="false">false — needs project roles left</option>
                 </select>
               </label>
               <label>
-                projectAccess
-                <select name="accessMode" id="edit-access">
-                  <option value="">leave as it is</option>
-                  <option value="ALL">ALL</option>
-                  <option value="LIMITED">LIMITED</option>
-                </select>
+                projectRoles — projectId:ROLE, comma separated; blank leaves them
+                <input type="text" name="projectRoles" id="edit-project-roles" />
               </label>
             </div>
-            <label>
-              projectIds for LIMITED
-              <input type="text" name="projectIds" id="edit-project-ids" />
-            </label>
             <div class="row">
               <label>
                 message
@@ -273,7 +253,6 @@
     <script src="/api.js"></script>
     <script src="/ui.js"></script>
     <script>
-      const ROLES = ["ADMIN", "EDITOR", "VIEWER"];
       let nextCursor = null;
 
       /**
@@ -289,20 +268,40 @@
       }
 
       /**
-       * The projectAccess object for a mode, or undefined to leave it out.
+       * "id:EDITOR, id:READER" as the API's projectRoles list; a bare id is
+       * EDITOR. Empty text gives an empty list.
        *
-       * @param {string} mode "", ALL or LIMITED
-       * @param {string} idsText
-       * @returns {object|undefined}
+       * @param {string} text
+       * @returns {Array<{projectId: string, role: string}>}
        */
-      function projectAccessFrom(mode, idsText) {
-        if (mode === "") {
-          return undefined;
+      function projectRolesFrom(text) {
+        return splitList(text).map((entry) => {
+          const [projectId, role] = entry.split(":");
+          return { projectId: projectId, role: role || "EDITOR" };
+        });
+      }
+
+      /**
+       * What an invitation grants, as one cell: "ADMIN" or its project roles.
+       *
+       * @param {object} invite
+       * @returns {string}
+       */
+      function accessText(invite) {
+        if (invite.admin === true) {
+          return "ADMIN";
         }
-        if (mode === "ALL") {
-          return { mode: "ALL" };
-        }
-        return { mode: "LIMITED", projectIds: splitList(idsText) };
+        const roles = invite.projectRoles ?? [];
+        return roles.length === 0
+          ? '<span class="muted">none</span>'
+          : roles
+              .map(
+                (entry) =>
+                  `${escapeHtml(entry.role)}<code>${escapeHtml(
+                    entry.projectId,
+                  )}</code>`,
+              )
+              .join("");
       }
 
       /**
@@ -355,31 +354,24 @@
         )}</p>${details}`;
       }
 
-      function accessText(projectAccess) {
-        if (projectAccess?.mode !== "LIMITED") {
-          return "ALL";
-        }
-        return `LIMITED<code>${projectAccess.projectIds
-          .map(escapeHtml)
-          .join(", ")}</code>`;
-      }
-
       // --- invite: preview and send ---
 
+      /**
+       * The send form as a request: admin when ticked, else the project
+       * roles typed; neither when both are blank, so the 400 can be watched.
+       *
+       * @returns {{body: object, headers: object}}
+       */
       function readSendForm() {
         const values = Object.fromEntries(
           new FormData(document.getElementById("send-form")).entries(),
         );
-        const body = {
-          recipients: splitList(values.recipients),
-          wsRole: values.wsRole,
-        };
-        const projectAccess = projectAccessFrom(
-          values.accessMode,
-          values.projectIds,
-        );
-        if (projectAccess !== undefined) {
-          body.projectAccess = projectAccess;
+        const body = { recipients: splitList(values.recipients) };
+        const projectRoles = projectRolesFrom(values.projectRoles);
+        if (values.admin === "on") {
+          body.admin = true;
+        } else if (projectRoles.length > 0) {
+          body.projectRoles = projectRoles;
         }
         if (values.message.trim() !== "") {
           body.message = values.message;
@@ -414,7 +406,7 @@
           .map(
             (invite) => `<tr data-sent-id="${escapeHtml(invite.inviteId)}">
               <td>${escapeHtml(invite.email)}</td>
-              <td>${escapeHtml(invite.wsRole)}</td>
+              <td>${accessText(invite)}</td>
               <td><code>${escapeHtml(invite.inviteId)}</code></td>
               <td>${escapeHtml(formatTime(invite.expiresAt))}</td>
             </tr>`,
@@ -422,7 +414,7 @@
           .join("");
         return `<h3>sent ${data.invites.length}</h3>
           <table>
-            <tr><th>email</th><th>role</th><th>inviteId</th><th>expires</th></tr>
+            <tr><th>email</th><th>access</th><th>inviteId</th><th>expires</th></tr>
             ${rows || '<tr><td colspan="4" class="muted">nothing new</td></tr>'}
           </table>
           <p class="muted">already invited, skipped: ${listHtml(
@@ -444,10 +436,14 @@
             return;
           }
           const { body } = readSendForm();
-          const result = await api.post(path, {
-            recipients: body.recipients,
-            wsRole: body.wsRole,
-          });
+          const preview = { recipients: body.recipients };
+          if (body.admin !== undefined) {
+            preview.admin = body.admin;
+          }
+          if (body.projectRoles !== undefined) {
+            preview.projectRoles = body.projectRoles;
+          }
+          const result = await api.post(path, preview);
           showResult(result);
           showOutcome(result, renderPreview);
         });
@@ -494,7 +490,10 @@
                     )}</code></td>
                     <td><button type="button" data-add-project="${escapeHtml(
                       project.projectId,
-                    )}">add</button></td>
+                    )}" data-role="EDITOR">add as EDITOR</button>
+                    <button type="button" data-add-project="${escapeHtml(
+                      project.projectId,
+                    )}" data-role="READER">add as READER</button></td>
                   </tr>`,
                 )
                 .join("")}</table>`
@@ -508,24 +507,24 @@
           if (button === null) {
             return;
           }
-          const input = document.getElementById("send-project-ids");
-          const ids = splitList(input.value);
-          if (!ids.includes(button.dataset.addProject)) {
-            ids.push(button.dataset.addProject);
-          }
-          input.value = ids.join(", ");
-          document.getElementById("send-access").value = "LIMITED";
+          // One entry per project: adding again changes its role.
+          const input = document.getElementById("send-project-roles");
+          const entries = projectRolesFrom(input.value).filter(
+            (entry) => entry.projectId !== button.dataset.addProject,
+          );
+          entries.push({
+            projectId: button.dataset.addProject,
+            role: button.dataset.role,
+          });
+          input.value = entries
+            .map((entry) => `${entry.projectId}:${entry.role}`)
+            .join(", ");
+          document.getElementById("send-admin").checked = false;
         });
 
       // --- the workspace's invitations ---
 
       function renderRow(invite) {
-        const roleOptions = ROLES.map(
-          (role) =>
-            `<option value="${role}"${
-              role === invite.wsRole ? " selected" : ""
-            }>${role}</option>`,
-        ).join("");
         return `<tbody data-invite-id="${escapeHtml(
           invite.inviteId,
         )}" class="${invite.isExpired ? "dim" : ""}">
@@ -533,8 +532,7 @@
             <td>${escapeHtml(invite.email)}<code>${escapeHtml(
               invite.inviteId,
             )}</code></td>
-            <td class="role-cell">${escapeHtml(invite.wsRole)}</td>
-            <td>${accessText(invite.projectAccess)}</td>
+            <td class="access-cell">${accessText(invite)}</td>
             <td><span class="chip">${escapeHtml(invite.status)}</span><br />
               <span class="muted">${escapeHtml(
                 timeLeft(invite.secondsUntilExpiry),
@@ -546,9 +544,8 @@
             <td class="resends">${escapeHtml(invite.resendCount)}</td>
             <td>${invite.seatRefHeld ? "yes" : "no"}</td>
           </tr>
-          <tr><td colspan="7" class="row-actions">
-            <select data-role-select>${roleOptions}</select>
-            <button type="button" data-action="role">change role</button>
+          <tr><td colspan="6" class="row-actions">
+            <button type="button" data-action="admin">make admin</button>
             <button type="button" data-action="resend">resend</button>
             <button type="button" data-action="link">copy link</button>
             <button type="button" data-action="edit">edit</button>
@@ -601,7 +598,7 @@
           <span class="chip">revoked ${escapeHtml(counts.revoked)}</span>`;
         container.innerHTML = items.length
           ? `<table>
-              <thead><tr><th>email</th><th>role</th><th>access</th>
+              <thead><tr><th>email</th><th>access</th>
                 <th>status</th><th>invited by</th><th>resends</th><th>seat</th>
               </tr></thead>
               ${items.map(renderRow).join("")}
@@ -627,7 +624,7 @@
       /**
        * Run one of a row's buttons against its invitation.
        *
-       * @param {string} action role, resend, link, edit or revoke
+       * @param {string} action admin, resend, link, edit or revoke
        * @param {HTMLElement} row the invitation's tbody
        * @returns {Promise<void>}
        */
@@ -642,9 +639,8 @@
           return;
         }
         let result;
-        if (action === "role") {
-          const wsRole = row.querySelector("[data-role-select]").value;
-          result = await api.patch(path, { wsRole: wsRole });
+        if (action === "admin") {
+          result = await api.patch(path, { admin: true });
         } else if (action === "resend") {
           result = await api.post(`${path}/resend`);
         } else if (action === "link") {
@@ -686,15 +682,11 @@
           return undefined;
         }
         const body = {};
-        if (values.wsRole !== "") {
-          body.wsRole = values.wsRole;
+        if (values.admin !== "") {
+          body.admin = values.admin === "true";
         }
-        const projectAccess = projectAccessFrom(
-          values.accessMode,
-          values.projectIds,
-        );
-        if (projectAccess !== undefined) {
-          body.projectAccess = projectAccess;
+        if (values.projectRoles.trim() !== "") {
+          body.projectRoles = projectRolesFrom(values.projectRoles);
         }
         if (values.messageMode === "set") {
           body.message = values.message;
@@ -713,7 +705,7 @@
           return '<p class="muted">no invitations wait for your address</p>';
         }
         return `<table>
-          <tr><th>workspace</th><th>role</th><th>invited by</th>
+          <tr><th>workspace</th><th>access</th><th>invited by</th>
             <th>sent</th><th>expires</th><th></th></tr>
           ${invites
             .map(
@@ -723,7 +715,7 @@
                 <td>${escapeHtml(invite.workspaceName ?? "—")}<code>${escapeHtml(
                   invite.inviteId,
                 )}</code></td>
-                <td>${escapeHtml(invite.role)}</td>
+                <td class="access-cell">${accessText(invite)}</td>
                 <td>${escapeHtml(invite.invitedBy?.name ?? "—")}</td>
                 <td>${escapeHtml(formatTime(invite.sentAt))}</td>
                 <td>${escapeHtml(formatTime(invite.expiresAt))}</td>

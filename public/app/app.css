@@ -908,6 +908,7 @@ select[disabled] {
   background: #a3791b2b;
   color: #e7b74f;
 }
+.role-READER,
 .role-VIEWER {
   background: #7a4ec42b;
   color: #b896f5;

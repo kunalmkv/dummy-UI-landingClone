@@ -93,7 +93,7 @@
         <p class="note">
           Billing belongs to the <strong>organization</strong>; any of its
           workspaces is the door. Reading it needs workspace
-          <strong>ADMIN or OWNER</strong> (EDITOR and VIEWER get FORBIDDEN).
+          <strong>admin</strong> (EDITOR and READER get FORBIDDEN).
           Changing the plan or the extra seats needs the
           <strong>organization's OWNER</strong> — an org ADMIN is refused, and
           so is a workspace owner who does not own the organization. No payment
@@ -104,7 +104,7 @@
           <h2>This organization — GET /workspaces/:id/billing</h2>
           <p class="hint">
             seatsUsed includes seats held by pending workspace invitations;
-            viewers are free. The seat limit is seatsIncluded + seatsExtra. The
+            readers are free. The seat limit is seatsIncluded + seatsExtra. The
             limits below are the current plan's, read from GET /billing/plans.
           </p>
           <button type="button" id="billing-button">reload billing</button>

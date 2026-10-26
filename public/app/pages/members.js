@@ -1,7 +1,7 @@
-// Members and invitations: the roster, roles, suspend, remove, leave, and the
-// invite dialog with its live seat preview.
+// Members and invitations: the roster, the admin flag, suspend, remove, leave,
+// and the invite dialog with its live seat preview.
 
-import { del, get, patch, post, query, ws } from "../lib/api.js";
+import { del, get, post, put, query, ws } from "../lib/api.js";
 import { go } from "../lib/router.js";
 import { can, loadBootstrap, state } from "../lib/state.js";
 import {
@@ -24,14 +24,25 @@ import {
 } from "../lib/ui.js";
 import { refreshWorkspace, shell } from "./shell.js";
 
+// What an invitation grants: the admin flag, or one role on the projects picked.
 const ROLES = [
-  { value: "ADMIN", label: "Admin", text: "Manages members, settings, tokens and webhooks." },
-  { value: "EDITOR", label: "Editor", text: "Builds pages, quizzes and campaigns in the projects they reach." },
-  { value: "VIEWER", label: "Viewer", text: "Sees everything, changes nothing. Free — no seat." },
+  { value: "ADMIN", label: "Admin", text: "Every project. Manages members, settings, tokens and webhooks." },
+  { value: "EDITOR", label: "Editor", text: "Builds pages, quizzes and campaigns on the projects picked below." },
+  { value: "READER", label: "Reader", text: "Sees the projects picked below, changes nothing. Free — no seat." },
 ];
 
 function parseEmails(text) {
   return [...new Set(String(text).split(/[\s,;]+/).map((one) => one.trim()).filter(Boolean))];
+}
+
+/** "Admin", or "Editor on 2 projects" — what a member or invitation holds. */
+function accessText(one) {
+  if (one.admin) {
+    return "Admin";
+  }
+  const roles = one.projectRoles ?? [];
+  const strongest = roles.some((entry) => entry.role === "EDITOR") ? "Editor" : "Reader";
+  return `${strongest} on ${roles.length} project${roles.length === 1 ? "" : "s"}`;
 }
 
 export async function renderMembers({ params, query: params_ }) {
@@ -41,7 +52,7 @@ export async function renderMembers({ params, query: params_ }) {
   }
   const id = params.id;
   const me = state.user?.id;
-  const view = { tab: params_.tab === "invitations" ? "invitations" : "members", q: "", role: "", members: [], nextCursor: null, invites: [], showExpired: false };
+  const view = { tab: params_.tab === "invitations" ? "invitations" : "members", q: "", admin: "", members: [], nextCursor: null, invites: [], showExpired: false };
 
   mount(
     content,
@@ -80,7 +91,7 @@ export async function renderMembers({ params, query: params_ }) {
           ${can("billing.read") ? html`<a href="#/w/${id}/settings/billing">Add seats</a>` : ""}
         </div>
         <div class="meter"><span style="width:${usedPct}%"></span><span class="pending" style="width:${pendingPct}%"></span></div>
-        <div class="muted" style="font-size:12px;margin-top:8px">${(seats.billableRoles ?? []).map((role) => role.charAt(0) + role.slice(1).toLowerCase()).join(", ")} take a seat. Viewers are free.</div>`,
+        <div class="muted" style="font-size:12px;margin-top:8px">${(seats.billableRoles ?? []).map((role) => role.charAt(0) + role.slice(1).toLowerCase()).join(", ")} take a seat. Readers are free.</div>`,
     );
   }
 
@@ -104,7 +115,7 @@ export async function renderMembers({ params, query: params_ }) {
       html`<div class="card-head" style="justify-content:flex-start">
           <div class="toolbar" style="flex:1">
             <div class="search">${icon("search")}<input type="search" placeholder="Search name or email" data-q value="${view.q}" /></div>
-            <select data-role><option value="">All roles</option>${["OWNER", "ADMIN", "EDITOR", "VIEWER"].map((role) => html`<option value="${role}"${view.role === role ? " selected" : ""}>${role.charAt(0) + role.slice(1).toLowerCase()}</option>`)}</select>
+            <select data-admin>${[["", "Everyone"], ["true", "Admins"], ["false", "Placed on projects"]].map(([value, label]) => html`<option value="${value}"${view.admin === value ? " selected" : ""}>${label}</option>`)}</select>
           </div>
         </div>
         <div data-rows>${skeletonRows()}</div>`,
@@ -116,15 +127,15 @@ export async function renderMembers({ params, query: params_ }) {
         loadMembers();
       }, 300),
     );
-    panel.querySelector("[data-role]").addEventListener("change", (event) => {
-      view.role = event.target.value;
+    panel.querySelector("[data-admin]").addEventListener("change", (event) => {
+      view.admin = event.target.value;
       loadMembers();
     });
   }
 
   async function loadMembers(append = false) {
     const rows = panel.querySelector("[data-rows]");
-    const result = await get(ws(id, `/members${query({ q: view.q.length >= 2 ? view.q : "", role: view.role, limit: 25, cursor: append ? view.nextCursor : "" })}`));
+    const result = await get(ws(id, `/members${query({ q: view.q.length >= 2 ? view.q : "", admin: view.admin, limit: 25, cursor: append ? view.nextCursor : "" })}`));
     if (!result.ok) {
       mount(rows, emptyState({ iconName: "triangle-alert", title: "Couldn't load members", text: result.error }));
       return;
@@ -137,29 +148,26 @@ export async function renderMembers({ params, query: params_ }) {
   function drawMembers() {
     const rows = panel.querySelector("[data-rows]");
     if (view.members.length === 0) {
-      mount(rows, emptyState({ iconName: "users", title: "No members match", text: "Try another name, email or role." }));
+      mount(rows, emptyState({ iconName: "users", title: "No members match", text: "Try another name or email." }));
       return;
     }
-    const canRole = can("member.role.change");
+    const canAdmin = can("admin.manage");
     const canRemove = can("member.remove");
     mount(
       rows,
       html`<div class="table-wrap"><table class="table">
-        <thead><tr><th>Member</th><th>Role</th><th>Status</th><th>Projects</th><th>Joined</th><th class="actions"></th></tr></thead>
+        <thead><tr><th>Member</th><th>Access</th><th>Status</th><th>Projects</th><th>Joined</th><th class="actions"></th></tr></thead>
         <tbody>${view.members.map((member) => {
           const self = member.userId === me;
-          const editable = canRole && !self && member.wsRole !== "OWNER";
           return html`<tr>
             <td><div class="person">${avatar(member.name || member.email, member.userId)}<div style="min-width:0"><div class="name">${member.name || member.email}${self ? html` <span class="chip" style="margin-left:4px">You</span>` : ""}</div><div class="email">${member.email}</div></div></div></td>
-            <td>${editable
-              ? html`<select data-role-of="${member.userId}">${["ADMIN", "EDITOR", "VIEWER"].map((role) => html`<option value="${role}"${member.wsRole === role ? " selected" : ""}>${role.charAt(0) + role.slice(1).toLowerCase()}</option>`)}</select>`
-              : roleChip(member.wsRole)}</td>
+            <td>${roleChip(member.accessLevel)}<div class="muted" style="font-size:12px">${accessText(member)}</div></td>
             <td>${member.status === "SUSPENDED"
               ? html`<span class="chip chip-warning">Suspended</span>`
               : html`<span style="display:inline-flex;align-items:center;gap:7px"><span class="dot-status ${member.presence === "ONLINE" ? "on" : ""}"></span>${member.presence === "ONLINE" ? "Online" : "Active"}</span>`}</td>
-            <td class="muted">${member.projectAccess?.mode === "LIMITED" ? `${member.projectAccess.granted} of ${member.projectAccess.total}` : "All projects"}</td>
+            <td class="muted">${member.admin ? "All projects" : `${member.projects?.reached ?? 0} of ${member.projects?.total ?? 0}`}</td>
             <td class="muted">${timeAgo(member.joinedAt)}</td>
-            <td class="actions">${(canRemove && !self && member.wsRole !== "OWNER") || (self && member.wsRole !== "OWNER")
+            <td class="actions">${self || canRemove || canAdmin
               ? html`<button class="btn btn-ghost btn-icon btn-sm" data-member-menu="${member.userId}" data-popover-anchor aria-label="Member actions">${icon("ellipsis")}</button>`
               : ""}</td>
           </tr>`;
@@ -168,20 +176,6 @@ export async function renderMembers({ params, query: params_ }) {
       ${view.nextCursor ? html`<div class="load-more"><button class="btn btn-sm" data-more>Load more</button></div>` : ""}`,
     );
     rows.querySelector("[data-more]")?.addEventListener("click", (event) => busy(event.currentTarget, () => loadMembers(true)));
-    rows.querySelectorAll("[data-role-of]").forEach((select) =>
-      select.addEventListener("change", async () => {
-        const member = view.members.find((one) => one.userId === select.dataset.roleOf);
-        const result = await patch(ws(id, `/members/${encodeURIComponent(member.userId)}`), { wsRole: select.value });
-        if (!result.ok) {
-          select.value = member.wsRole;
-          toast(result.error, "error");
-          return;
-        }
-        member.wsRole = select.value;
-        toast(`${member.name || member.email} is now ${select.value.toLowerCase()}`);
-        loadSeats();
-      }),
-    );
     rows.querySelectorAll("[data-member-menu]").forEach((button) =>
       button.addEventListener("click", () => {
         const member = view.members.find((one) => one.userId === button.dataset.memberMenu);
@@ -189,6 +183,14 @@ export async function renderMembers({ params, query: params_ }) {
         const items = self
           ? [{ label: "Leave workspace", icon: "log-out", danger: true, onClick: () => leave() }]
           : [
+              ...(canAdmin
+                ? [
+                    member.admin
+                      ? { label: "Remove admin flag", icon: "shield-off", onClick: () => setAdmin(member, false) }
+                      : { label: "Make admin", icon: "shield", onClick: () => setAdmin(member, true) },
+                    "sep",
+                  ]
+                : []),
               member.status === "SUSPENDED"
                 ? { label: "Reactivate", icon: "rotate-ccw", onClick: () => setSuspended(member, false) }
                 : { label: "Suspend", icon: "ban", onClick: () => setSuspended(member, true) },
@@ -198,6 +200,30 @@ export async function renderMembers({ params, query: params_ }) {
         popover(button, items);
       }),
     );
+  }
+
+  // Without project roles to keep, taking the flag away takes them out.
+  async function setAdmin(member, admin) {
+    if (!admin) {
+      const yes = await confirmDialog({
+        title: `Remove the admin flag from ${member.name || member.email}?`,
+        message: "They hold no project roles, so they leave the workspace. Invite them again to place them on a project.",
+        confirmLabel: "Remove admin",
+        danger: true,
+      });
+      if (!yes) {
+        return;
+      }
+    }
+    const path = ws(id, `/admins/${encodeURIComponent(member.userId)}`);
+    const result = admin ? await put(path, {}) : await del(path);
+    if (!result.ok) {
+      toast(result.error, "error");
+      return;
+    }
+    toast(admin ? `${member.name || member.email} is an admin now` : `${member.name || member.email} left the workspace`);
+    loadSeats();
+    loadMembers();
   }
 
   async function setSuspended(member, suspend) {
@@ -324,7 +350,7 @@ export async function renderMembers({ params, query: params_ }) {
         emptyState({
           iconName: "mail",
           title: "No pending invitations",
-          text: "Invite people by email. They join with the role you pick.",
+          text: "Invite people by email. They join with the access you pick.",
           action: can("member.invite") ? html`<button class="btn btn-primary btn-sm" data-invite-empty>${icon("user-plus")} Invite people</button>` : "",
         }),
       );
@@ -335,13 +361,11 @@ export async function renderMembers({ params, query: params_ }) {
     mount(
       rows,
       html`<div class="table-wrap"><table class="table">
-        <thead><tr><th>Email</th><th>Role</th><th>Invited by</th><th>Sent</th><th>Expires</th><th class="actions"></th></tr></thead>
+        <thead><tr><th>Email</th><th>Access</th><th>Invited by</th><th>Sent</th><th>Expires</th><th class="actions"></th></tr></thead>
         <tbody>${view.invites.map(
           (invite) => html`<tr>
             <td><div class="person">${avatar(invite.email, invite.email)}<div class="name">${invite.email}</div></div></td>
-            <td>${manage && !invite.isExpired
-              ? html`<select data-invite-role="${invite.inviteId}">${["ADMIN", "EDITOR", "VIEWER"].map((role) => html`<option value="${role}"${invite.wsRole === role ? " selected" : ""}>${role.charAt(0) + role.slice(1).toLowerCase()}</option>`)}</select>`
-              : roleChip(invite.wsRole)}</td>
+            <td>${accessText(invite)}</td>
             <td class="muted">${invite.invitedBy?.name ?? "—"}</td>
             <td class="muted">${timeAgo(invite.lastSentAt ?? invite.sentAt)}${invite.resendCount ? ` · resent ${invite.resendCount}×` : ""}</td>
             <td>${invite.isExpired ? html`<span class="chip chip-danger">Expired</span>` : html`<span class="muted">${timeAgo(invite.expiresAt)}</span>`}</td>
@@ -349,19 +373,6 @@ export async function renderMembers({ params, query: params_ }) {
           </tr>`,
         )}</tbody>
       </table></div>`,
-    );
-    rows.querySelectorAll("[data-invite-role]").forEach((select) =>
-      select.addEventListener("change", async () => {
-        const invite = view.invites.find((one) => one.inviteId === select.dataset.inviteRole);
-        const result = await patch(ws(id, `/invites/${encodeURIComponent(invite.inviteId)}`), { wsRole: select.value });
-        if (!result.ok) {
-          select.value = invite.wsRole;
-          toast(result.error, "error");
-          return;
-        }
-        invite.wsRole = select.value;
-        toast("Invitation updated");
-      }),
     );
     rows.querySelectorAll("[data-invite-menu]").forEach((button) =>
       button.addEventListener("click", () => {
@@ -413,17 +424,26 @@ export async function renderMembers({ params, query: params_ }) {
 
   // ── invite dialog ────────────────────────────────────────────────────
 
-  function openInvite() {
+  async function openInvite() {
     let role = "EDITOR";
+    // Every active project, ticked: an Editor or Reader is placed on the ticked ones.
+    const listed = await get(ws(id, `/projects${query({ limit: 100 })}`));
+    const projects = listed.ok ? listed.data.items ?? [] : [];
     openModal({
       title: `Invite people to ${state.workspace.name}`,
       subtitle: "They'll get an email with a link to join.",
       size: "lg",
       body: html`<form class="modal-body form" novalidate>
           <label class="field"><span>Email addresses</span><textarea name="emails" placeholder="name@company.com, another@company.com" rows="3"></textarea><span class="hint">Separate addresses with commas, spaces or new lines.</span></label>
-          <div class="field"><span class="field-label">Role</span>
+          <div class="field"><span class="field-label">Access</span>
             <div class="segmented" data-roles>${ROLES.map((one) => html`<button type="button" data-role="${one.value}" class="${one.value === role ? "active" : ""}">${one.label}</button>`)}</div>
             <span class="hint" data-role-text>${ROLES.find((one) => one.value === role).text}</span>
+          </div>
+          <div class="field" data-projects>
+            <span class="field-label">Projects</span>
+            ${projects.length
+              ? projects.map((project) => html`<label class="check"><input type="checkbox" name="projectIds" value="${project.projectId}" checked /> ${project.name}</label>`)
+              : html`<span class="hint">No projects yet — only an admin can be invited until one exists.</span>`}
           </div>
           <label class="field"><span>Personal message <span class="muted">(optional)</span></span><input type="text" name="message" maxlength="500" placeholder="Welcome aboard!" /></label>
           <div data-preview></div>
@@ -433,7 +453,16 @@ export async function renderMembers({ params, query: params_ }) {
         const form = modal.querySelector("form");
         const send = modal.querySelector("[data-send]");
         const previewBox = modal.querySelector("[data-preview]");
+        const projectsBox = modal.querySelector("[data-projects]");
         let valid = [];
+        // Either the admin flag, or one role on the ticked projects — never both.
+        function access() {
+          if (role === "ADMIN") {
+            return { admin: true };
+          }
+          const picked = [...form.querySelectorAll("[name=projectIds]:checked")].map((box) => box.value);
+          return { projectRoles: picked.map((projectId) => ({ projectId: projectId, role: role })) };
+        }
         const preview = debounce(async () => {
           const recipients = parseEmails(form.elements.emails.value);
           if (recipients.length === 0) {
@@ -441,7 +470,7 @@ export async function renderMembers({ params, query: params_ }) {
             send.disabled = true;
             return;
           }
-          const result = await post(ws(id, "/invites/preview"), { recipients: recipients, wsRole: role });
+          const result = await post(ws(id, "/invites/preview"), { recipients: recipients, ...access() });
           if (!result.ok) {
             mount(previewBox, html`<div class="form-error">${icon("circle-alert")}<span>${result.error}</span></div>`);
             send.disabled = true;
@@ -458,25 +487,27 @@ export async function renderMembers({ params, query: params_ }) {
               ${(data.alreadyMember ?? []).length ? html`<div><div class="field-label" style="margin-bottom:6px">Already members</div><div class="chips-input">${data.alreadyMember.map((email) => html`<span class="chip">${email}</span>`)}</div></div>` : ""}
               ${(data.alreadyInvited ?? []).length ? html`<div><div class="field-label" style="margin-bottom:6px">Already invited</div><div class="chips-input">${data.alreadyInvited.map((email) => html`<span class="chip">${email}</span>`)}</div></div>` : ""}
               <div class="meter-row">${seats.shortBy > 0
-                ? html`<span class="warning-text">${icon("triangle-alert")} Short by ${seats.shortBy} seat${seats.shortBy === 1 ? "" : "s"} — add seats in Billing, or invite as Viewer (free).</span>`
-                : html`<span>${role === "VIEWER" ? "Viewers don't take a seat." : `Uses ${seats.wouldConsume ?? 0} of ${seats.free ?? 0} free seats.`}</span>`}</div>
+                ? html`<span class="warning-text">${icon("triangle-alert")} Short by ${seats.shortBy} seat${seats.shortBy === 1 ? "" : "s"} — add seats in Billing, or invite as Reader (free).</span>`
+                : html`<span>${role === "READER" ? "Readers don't take a seat." : `Uses ${seats.wouldConsume ?? 0} of ${seats.free ?? 0} free seats.`}</span>`}</div>
             </div></div>`,
           );
           send.disabled = valid.length === 0 || seats.shortBy > 0;
         }, 350);
         form.elements.emails.addEventListener("input", preview);
+        projectsBox.addEventListener("change", preview);
         modal.querySelectorAll("[data-role]").forEach((button) =>
           button.addEventListener("click", () => {
             role = button.dataset.role;
             modal.querySelectorAll("[data-role]").forEach((one) => one.classList.toggle("active", one === button));
             modal.querySelector("[data-role-text]").textContent = ROLES.find((one) => one.value === role).text;
+            projectsBox.hidden = role === "ADMIN";
             preview();
           }),
         );
         send.addEventListener("click", () =>
           busy(send, async () => {
             setFormError(form, null);
-            const body = { recipients: valid, wsRole: role };
+            const body = { recipients: valid, ...access() };
             if (form.elements.message.value.trim()) {
               body.message = form.elements.message.value.trim();
             }

@@ -1,6 +1,6 @@
 // One journey through the pages, the way someone integrating the frontend
 // would walk it: an owner signs up, builds a workspace, brings two people in,
-// runs it, hands it over; the new owner archives and restores it; one leaves.
+// runs it, makes one an admin, archives and restores it; one leaves.
 //
 // Owner and Newcomer start with no account, so everything they do goes
 // through the pages. Joiner is an existing account (person()).
@@ -293,10 +293,9 @@ async function ownerMakesProjects(owner) {
   return projectId;
 }
 
-/** Fill the send form and send; project limits are added before this. */
+/** Fill the send form and send; the project roles are set before this. */
 async function sendInvite(page, email) {
   await page.fill("#send-recipients", email);
-  await page.selectOption("#send-role", "EDITOR");
   const shown = await click(page, "#send-btn");
   assertStatus(shown, 201, `invite ${email}`);
   assert.equal(await page.locator("#send-outcome tr[data-sent-id]").count(), 1);
@@ -307,23 +306,28 @@ async function peopleJoin(owner, joiner, newcomer, projectId) {
   const inviteRow = (email) =>
     page.locator("#invite-rows tbody[data-invite-id]", { hasText: email });
 
-  await step("5a. Owner invites Joiner as an EDITOR", async () => {
+  await step("5a. Owner invites Joiner as an EDITOR on the project", async () => {
     await page.goto(`${HARNESS}/invitations`);
     await page
       .locator("#invite-rows", { hasText: "no invitations match" })
       .waitFor();
+    await page.fill("#send-project-roles", `${projectId}:EDITOR`);
     await sendInvite(page, joiner.email);
     await inviteRow(joiner.email).waitFor();
   });
 
-  await step("5b. Owner invites Newcomer, limited to one project", async () => {
+  await step("5b. Owner invites Newcomer onto the project from its list", async () => {
+    await page.fill("#send-project-roles", "");
     assertOk(await click(page, "#list-projects"), "list projects");
-    await page.click(`[data-add-project="${projectId}"]`);
-    assert.equal(await page.inputValue("#send-access"), "LIMITED");
+    await page.click(`[data-add-project="${projectId}"][data-role="EDITOR"]`);
+    assert.equal(
+      await page.inputValue("#send-project-roles"),
+      `${projectId}:EDITOR`,
+    );
     await sendInvite(page, newcomer.email);
     assert.match(
       await panelText(page),
-      new RegExp(`"projectIds": \\[\\s*"${projectId}"`),
+      new RegExp(`"projectId": "${projectId}"`),
     );
     await inviteRow(newcomer.email)
       .locator("td", { hasText: projectId })
@@ -410,21 +414,22 @@ async function ownerManagesMembers(owner, joiner, newcomer) {
   const fieldOf = (email, field) =>
     rowOf(email).locator(`[data-field="${field}"]`).innerText();
 
-  await step("7a. members raises Joiner to ADMIN", async () => {
+  await step("7a. members makes Joiner an admin", async () => {
     await page.goto(`${HARNESS}/members`);
     await rowOf(newcomer.email).waitFor();
     assert.equal((await panelStatus(page)).status, 200);
     assert.equal(await page.locator("#members-table tbody tr").count(), 3);
-    assert.match(await fieldOf(newcomer.email, "access"), /LIMITED/);
+    assert.equal(await fieldOf(newcomer.email, "access"), "EDITOR");
     assertOk(
       await press(page, () =>
         rowOf(joiner.email).locator('button[data-action="select"]').click(),
       ),
       "select Joiner",
     );
-    await page.selectOption('#role-form select[name="wsRole"]', "ADMIN");
-    assertOk(await click(page, '#role-form button[type="submit"]'), "role");
-    assert.equal(await fieldOf(joiner.email, "role"), "ADMIN");
+    await page.check("#admin-toggle");
+    assertOk(await click(page, '#admin-form button[type="submit"]'), "admin");
+    assert.equal(await fieldOf(joiner.email, "access"), "ADMIN");
+    assert.equal(await fieldOf(joiner.email, "admin"), "admin");
   });
 
   await step("7b. the removal impact for Newcomer is read", async () => {
@@ -600,83 +605,12 @@ async function ownerReadsAudit(owner, workspaceId) {
   });
 }
 
-async function ownershipHandedOver(owner, joiner, workspaceId) {
+// Archive and restore are the organization Owner's alone: a workspace has no
+// owner of its own since the project-level roles design (2026-10-25).
+async function ownerArchivesAndRestores(owner) {
   const page = owner.page;
-  const loaded = `body[data-loaded="${workspaceId}"]`;
 
-  await step(
-    "11a. Owner confirms the password and offers it to Joiner",
-    async () => {
-      await page.goto(`${HARNESS}/ownership`);
-      await page.locator(loaded).waitFor();
-      assert.equal((await panelStatus(page)).status, 200);
-      assert.match(await text(page, "#offer-state"), /no open offer/);
-      await page.fill("#identity-confirm-password", PASSWORD);
-      assertOk(
-        await click(page, '#identity-confirm-form button[type="submit"]'),
-        "identity confirmation",
-      );
-      assert.match(await text(page, "#identity-confirm-outcome"), /granted/);
-      const joinerId = await page
-        .locator("#offer-to option", { hasText: joiner.email })
-        .getAttribute("value");
-      await page.selectOption("#offer-to", joinerId);
-      await page.fill("#offer-confirm", RENAMED);
-      assertOk(await click(page, '#offer-form button[type="submit"]'), "offer");
-      assert.match(await text(page, "#offer-state"), new RegExp(joiner.email));
-      assert.equal(
-        await text(page, '#offer-state [data-field="status"]'),
-        "PENDING",
-      );
-    },
-  );
-
-  await step("11b. Joiner opens the mailed link and accepts", async () => {
-    const joinerPage = joiner.page;
-    await followMailedLink(
-      joinerPage,
-      joiner.email,
-      "OWNERSHIP_TRANSFER",
-      "transferLink",
-    );
-    await joinerPage.waitForURL(`${HARNESS}/ownership#*`);
-    await joinerPage.locator(loaded).waitFor();
-    // As an ADMIN, Joiner may not read the open offer yet.
-    assert.equal((await panelStatus(joinerPage)).status, 403);
-    assert.notEqual(await joinerPage.inputValue("#accept-token"), "");
-    assertOk(
-      await click(joinerPage, '#accept-form button[type="submit"]'),
-      "accept",
-    );
-    assert.match(
-      await text(joinerPage, "#accept-outcome"),
-      /you now own workspace/,
-    );
-    assertOk(await click(joinerPage, "#workspace-reload"), "reload the list");
-    await joinerPage.locator(loaded).waitFor();
-    assert.match(
-      await text(joinerPage, "#workspace-select option:checked"),
-      /OWNER/,
-    );
-  });
-
-  await step("11c. Owner now sees ADMIN", async () => {
-    await page.goto(`${HARNESS}/ownership`);
-    await page.locator(loaded).waitFor();
-    assert.match(await text(page, "#workspace-select option:checked"), /ADMIN/);
-    // An ADMIN may no longer read the offer.
-    assert.equal((await panelStatus(page)).status, 403);
-    assert.match(
-      await text(page, "#capability-line"),
-      /no workspace\.transfer/,
-    );
-  });
-}
-
-async function joinerArchivesAndRestores(joiner) {
-  const page = joiner.page;
-
-  await step("12a. Joiner confirms the password and archives", async () => {
+  await step("11a. Owner confirms the password and archives", async () => {
     await page.goto(`${HARNESS}/workspace`);
     await page.locator("#ws-view strong", { hasText: RENAMED }).waitFor();
     assert.equal((await panelStatus(page)).status, 200);
@@ -690,12 +624,12 @@ async function joinerArchivesAndRestores(joiner) {
     assert.match(await panelText(page), /ARCHIVED/);
   });
 
-  await step("12b. the workspace reads as read-only", async () => {
+  await step("11b. the workspace reads as read-only", async () => {
     assertOk(await click(page, "#load-workspace"), "load");
     assert.match(await text(page, "#ws-view"), /read-only/);
   });
 
-  await step("12c. restore makes it writable again", async () => {
+  await step("11c. restore makes it writable again", async () => {
     assertOk(await click(page, "#restore"), "restore");
     assert.match(await panelText(page), /"status": "ACTIVE"/);
     assertOk(await click(page, "#load-workspace"), "load");
@@ -705,7 +639,7 @@ async function joinerArchivesAndRestores(joiner) {
 
 async function newcomerLeaves(newcomer) {
   const page = newcomer.page;
-  await step("13. Newcomer leaves the workspace on members", async () => {
+  await step("12. Newcomer leaves the workspace on members", async () => {
     await page.goto(`${HARNESS}/members`);
     await page
       .locator("#members-table tbody tr", { hasText: newcomer.email })
@@ -738,8 +672,7 @@ async function newcomerLeaves(newcomer) {
     await ownerUsesToken(owner, workspaceId);
     await ownerAddsWebhook(owner);
     await ownerReadsAudit(owner, workspaceId);
-    await ownershipHandedOver(owner, joiner, workspaceId);
-    await joinerArchivesAndRestores(joiner);
+    await ownerArchivesAndRestores(owner);
     await newcomerLeaves(newcomer);
 
     await step("no page threw", () => {
