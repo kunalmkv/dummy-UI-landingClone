@@ -1,9 +1,8 @@
 // Account & security: the signed-in person's own sign-in settings — profile,
-// password, two-factor, Google, sessions and organization invitations.
+// password, two-factor, Google and sessions.
 
-import { get, post, query } from "../lib/api.js";
+import { get, post } from "../lib/api.js";
 import { renderGoogleButton } from "../lib/google.js";
-import { latestMail, tokenOf } from "../lib/devmail.js";
 import { go, navigation } from "../lib/router.js";
 import { signedOut, state } from "../lib/state.js";
 import { busy, confirmDialog, copyText, emptyState, formValues, fullName, html, icon, mount, openModal, setFormError, shortDate, timeAgo, toast } from "../lib/ui.js";
@@ -21,7 +20,6 @@ const SECTIONS = [
   { key: "preferences", label: "Preferences", icon: "sliders-horizontal" },
   { key: "notifications", label: "Notifications", icon: "bell" },
   { key: "privacy", label: "Terms, export & closing", icon: "file-text" },
-  { key: "invitations", label: "Organization invites", icon: "mail" },
 ];
 
 export async function renderAccount({ params }) {
@@ -61,7 +59,7 @@ export async function renderAccount({ params }) {
   wireUserMenu(app);
   const target = app.querySelector("#section");
   const again = () => renderAccount({ params: { section: section.key } });
-  const render = { profile, password, "two-factor": twoFactor, google, sessions, activity, preferences, notifications, privacy, invitations }[section.key];
+  const render = { profile, password, "two-factor": twoFactor, google, sessions, activity, preferences, notifications, privacy }[section.key];
   await render(target, data, again);
 }
 
@@ -455,87 +453,3 @@ async function sessions(target, data, again) {
   });
 }
 
-// ── organization invitations ───────────────────────────────────────────
-
-async function invitations(target, data, again) {
-  const user = data.user;
-  const organizations = user.organizations ?? (data.organization ? [{ ...data.organization, isPrimary: true }] : []);
-  const organizationId = state.accountOrganizationId ?? organizations.find((one) => one.isPrimary)?.id ?? organizations[0]?.id ?? "";
-  const listed = await get(`/auth/invite/list${query({ organizationId: organizationId })}`);
-  const rows = listed.ok ? listed.data.invites ?? [] : [];
-  mount(
-    target,
-    html`<div class="card">
-        <div class="card-head"><div><h2>Invite people to the organization</h2><p>They join the organization itself, not one workspace. Owners and admins only. Workspace invitations are sent from a workspace's Members page.</p></div></div>
-        <form class="card-body form" id="invite-form" novalidate>
-          ${organizations.length > 1
-            ? html`<label class="field"><span>Organization</span><select name="organizationId">${organizations.map((one) => html`<option value="${one.id}"${one.id === organizationId ? " selected" : ""}>${one.name}</option>`)}</select></label>`
-            : html`<input type="hidden" name="organizationId" value="${organizationId}" />`}
-          <div class="row-2">
-            <label class="field"><span>Email</span><input type="email" name="email" autocomplete="off" placeholder="teammate@company.com" required /></label>
-            <label class="field"><span>Role</span><select name="role"><option value="MEMBER">Member</option><option value="ADMIN">Admin</option></select></label>
-          </div>
-          <div class="row-2"><button class="btn btn-primary" type="submit">Send invitation</button><span id="invite-note"></span></div>
-        </form>
-      </div>
-      <div class="card">
-        <div class="card-head"><div><h2>Pending invitations</h2><p>Open until accepted, revoked or expired.</p></div></div>
-        ${!listed.ok
-          ? emptyState({ iconName: "lock", title: "Not available", text: listed.error })
-          : rows.length === 0
-            ? emptyState({ iconName: "mail", title: "No pending invitations", text: "" })
-            : html`<div class="table-wrap"><table class="table"><thead><tr><th>Email</th><th>Role</th><th>Sent</th><th>Expires</th><th class="actions"></th></tr></thead><tbody>${rows.map(
-                (one) => html`<tr><td>${one.email}</td><td><span class="chip">${one.role}</span></td><td>${timeAgo(one.createdAt)}</td><td>${shortDate(one.expiresAt)}</td><td class="actions"><button class="btn btn-sm" data-revoke-invite="${one.id}">Revoke</button></td></tr>`,
-              )}</tbody></table></div>`}
-      </div>`,
-  );
-  const form = target.querySelector("#invite-form");
-  form.elements.organizationId?.addEventListener?.("change", () => {
-    state.accountOrganizationId = form.elements.organizationId.value;
-    again();
-  });
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const values = formValues(form);
-    busy(form.querySelector("button[type=submit]"), async () => {
-      setFormError(form, null);
-      const body = { email: values.email.trim(), role: values.role };
-      if (values.organizationId) {
-        body.organizationId = values.organizationId;
-      }
-      const result = await post("/auth/invite/send", body);
-      if (!result.ok) {
-        setFormError(form, result.error);
-        return;
-      }
-      toast(`Invitation sent to ${body.email}`);
-      // A local API: offer the emailed link, as the dev inbox shows it.
-      const mail = await latestMail(body.email, "INVITE", { attempts: 6 });
-      await again();
-      const token = tokenOf(mail?.payload?.inviteLink);
-      if (token) {
-        const note = document.querySelector("#invite-note");
-        if (note) {
-          note.innerHTML = String(html`<a href="#/accept-invite?token=${token}" data-open-invite>Local preview: open the invitation link</a>`);
-        }
-      }
-    });
-  });
-  target.querySelectorAll("[data-revoke-invite]").forEach((button) =>
-    button.addEventListener("click", () =>
-      busy(button, async () => {
-        const body = { inviteId: button.dataset.revokeInvite };
-        if (organizationId) {
-          body.organizationId = organizationId;
-        }
-        const result = await post("/auth/invite/revoke", body);
-        if (!result.ok) {
-          toast(result.error, "error");
-          return;
-        }
-        toast("Invitation revoked");
-        again();
-      }),
-    ),
-  );
-}

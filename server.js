@@ -322,7 +322,7 @@ const CONTENT_TYPES = {
 };
 
 // Paths a mail points at. The app serves them all; its router reads ?token= or #token.
-const APP_LINK_PATHS = new Set(["/invite", "/login", "/verify-email", "/reset-password", "/magic-link", "/accept-invite", "/preview", "/confirm-email"]);
+const APP_LINK_PATHS = new Set(["/invite", "/login", "/verify-email", "/reset-password", "/magic-link", "/preview", "/confirm-email"]);
 
 /**
  * Turn a request path into a file on disk, or null.

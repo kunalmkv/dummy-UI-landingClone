@@ -67,12 +67,12 @@ from `public/app`; `e2e/app-auth.e2e.mjs` and `e2e/app-me.e2e.mjs` drive them th
 
 - **Account & security** (`#/account/<section>`, from the user menu): profile, change password,
   two-factor (set up with the QR and key, backup codes shown once, new codes, turn off), Google
-  link and unlink, sessions (list, revoke, sign out everywhere), and organization invitations
-  (send, list, revoke).
+  link and unlink, and sessions (list, revoke, sign out everywhere). Organization invitations
+  (`/auth/invite/*`) were retired on 2026-10-26: workspace invitations are the one way in.
 - **Sign in** also offers "Forgot your password?" and "Email me a sign-in link instead"; the
   two-step page has "Not you? Cancel this sign-in".
-- **Emailed links open the app.** `/verify-email`, `/reset-password`, `/magic-link`,
-  `/accept-invite?token=` and `/login` are served by the app (`APP_LINK_PATHS` in `server.js`);
+- **Emailed links open the app.** `/verify-email`, `/reset-password`, `/magic-link`
+  and `/login` are served by the app (`APP_LINK_PATHS` in `server.js`);
   `main.js` turns each into its hash route. The bare API testers moved to `<path>-tester`
   (`/reset-password-tester` and so on), and the inbox shows a "tester →" link beside each link.
 - **Confirm it's you** (`lib/identity.js`): before archive (ownership handover is gone, see below), a password,
@@ -200,7 +200,7 @@ Five facts found by reading the code, not assumed. Each one removes a choice.
 | Fact | Consequence |
 |---|---|
 | `web-server.config.js` already whitelists **`http://localhost:3001`** with `credentials: true` | Serve on **3001** and CORS works with **zero backend changes**. Any other port needs a config edit |
-| Emailed links point at `http://localhost:3001/verify-email`, `/reset-password`, `/magic-link`, `/accept-invite` | Those four paths must exist (the app owns them now; the old testers are `<path>-tester`), so a link from a real email is **directly clickable** into this harness |
+| Emailed links point at `http://localhost:3001/verify-email`, `/reset-password`, `/magic-link` | Those three paths must exist (the app owns them now; the old testers are `<path>-tester`), so a link from a real email is **directly clickable** into this harness |
 | The cookie is `HttpOnly`, `SameSite` omitted (browser default `Lax`), `Secure` only in prod | `localhost:3001 → localhost:3000` is **same-site**, so `Lax` sends it and plain `http` keeps it. Every fetch needs `credentials: "include"` |
 | `responseLib` answers **HTTP 200 for everything**; the real code is `body.status` | ⚠️ The client must never branch on `response.ok`. Reading the HTTP status would make every 401 and 409 look like a success |
 | ⚠️ **`SMTP_HOST` is set locally, so mail is really sent** — not rendered to the console | Registering `test@example.com` sends a real message that bounces, against the shared 2,000/day Gmail cap (§9.1). **Tokens must come from the outbox, not from an inbox or the console** |
@@ -270,7 +270,7 @@ unverified; the response panel shows `UNAUTHORIZED`, not a browser error. Then i
 ### Phase 2 — The dev inbox and the four link pages
 
 - `GET /dev/outbox` in `server.js` + an inbox page: newest first, filter by address, each row a clickable link
-- `/verify-email`, `/reset-password`, `/magic-link`, `/accept-invite` — each reads `?token=` and posts it
+- `/verify-email`, `/reset-password`, `/magic-link` — each reads `?token=` and posts it
 
 **You verify:** register → open the inbox → click the verify link → the account activates → login works. Then
 replay the same link and watch it fail, which is the single-use guarantee. Then forgot-password → reset → the
@@ -343,7 +343,7 @@ response panel on the right. Every page that acts on a workspace also has the **
 | `/invitations` | preview, send, list, edit, resend, copy the link, revoke; your own invitations, accepted or declined |
 | `/invite#<token>` | the mailed workspace invite; opens the app's invite page (see "The invite flow") |
 | `/invite-tester#<token>` | the same token on the tester: look it up, then accept signed in, accept by signing up, or decline |
-| `/verify-email-tester`, `/reset-password-tester`, `/magic-link-tester`, `/accept-invite-tester` | the old bare testers for the four emailed links; the real paths open the app |
+| `/verify-email-tester`, `/reset-password-tester`, `/magic-link-tester` | the old bare testers for the three emailed links; the real paths open the app |
 | `/members` | the list and its filters, one member, the admin flag (PUT/DELETE `…/admins/:userId`), project roles (PUT `…/project-roles`), suspend and reactivate, removal impact then remove, leave, seats, presence |
 | `/ownership` | retired on 2026-10-25: a note and a link to `/members` |
 | `/projects` | list, create, read, rename, archive, and a project's people (list, place or change at EDITOR/READER, remove, invite into the project); can send an API token instead of the cookie |
@@ -406,7 +406,7 @@ sleeps, the API's heartbeat sees the long pause and kills the API, and every run
 | Script | Covers |
 |---|---|
 | `smoke` | the harness itself: a signed-in person shows in the identity strip |
-| `auth-core`, `auth-extras`, `auth-invites` | the auth pages: account, two-factor, sessions, edge cases, Google, organization invites, the inbox |
+| `auth-core`, `auth-extras`, `auth-invites` | the auth pages: account, two-factor, sessions, edge cases, Google, the inbox; `auth-invites` also checks the retired organization invites are gone |
 | `organization`, `workspace`, `me` | the pages of the same name |
 | `invitations` | `/invitations` and `/invite-tester`, for every way an invitee answers |
 | `members` | the page of the same name: the admin flag, project roles, suspend, remove, leave |
@@ -418,7 +418,7 @@ sleeps, the API's heartbeat sees the long pause and kills the API, and every run
 | `wiki` | the wiki's live tester (on `:4002`), not this harness |
 | `app` | the workspace app at `/` through the UI only: sign up, welcome, onboarding, projects, members, settings, three invitees joining (from the mailed link after signing up, from the banner in their own workspace, from the welcome screen), the bell |
 | `pages` | pages through the UI: the list, a page from a template, an edit in the GrapesJS canvas that autosaves, publish and versions, the preview tab, SEO settings, archive, restore and delete |
-| `app-auth` | the app's account and sign-in screens through the UI: password change, forgot and reset, sign in and confirm by emailed link, sessions, two-factor with backup codes and "Not you?", the identity check by emailed code, organization invitations, Google linking |
+| `app-auth` | the app's account and sign-in screens through the UI: password change, forgot and reset, sign in and confirm by emailed link, sessions, two-factor with backup codes and "Not you?", the identity check by emailed code, Google linking |
 | `app-me` | the `/me` screens and the planned `/auth` routes through the UI, on the hybrid harness (:3002): account bell, search, profile and photo, email change, security activity, preferences applied to the page, notification matrix, terms, export, closing the account, the switcher |
 | `app-coverage` | static: every `/auth` and `/me` route in the mock catalog is called, with its own method, somewhere in `public/app` |
 | `app-mock` | the same app against the mock (`HARNESS=http://localhost:3002`); records every `/api` call so a mock the UI cannot use shows up as a list |

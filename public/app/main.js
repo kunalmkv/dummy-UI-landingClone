@@ -6,7 +6,7 @@ import { loadPreferences } from "./lib/prefs.js";
 import { wireSearchShortcut } from "./lib/search.js";
 import { loadUser, signedOut, state } from "./lib/state.js";
 import { renderAccount } from "./pages/account.js";
-import { renderAcceptOrgInvite, renderConfirmEmail, renderForgotPassword, renderMagicLink, renderResetPassword, renderVerifyEmail } from "./pages/auth-links.js";
+import { renderConfirmEmail, renderForgotPassword, renderMagicLink, renderResetPassword, renderVerifyEmail } from "./pages/auth-links.js";
 import { renderMfa, renderSignIn, renderSignUp, renderVerify } from "./pages/auth.js";
 import { renderHome } from "./pages/home.js";
 import { renderInvite } from "./pages/invite.js";
@@ -71,7 +71,6 @@ route("/forgot-password", guarded(renderForgotPassword, false));
 route("/reset-password", guarded(renderResetPassword, "either"));
 route("/magic-link", guarded(renderMagicLink, "either"));
 route("/verify-email", guarded(renderVerifyEmail, "either"));
-route("/accept-invite", guarded(renderAcceptOrgInvite, "either"));
 route("/confirm-email", guarded(renderConfirmEmail, "either"));
 route("/account", guarded(renderAccount));
 route("/account/:section", guarded(renderAccount));
@@ -102,7 +101,7 @@ window.addEventListener("session-ended", () => {
 // carry their token in the fragment (/invite#<token>, /preview#<token>); the
 // others carry ?token=. Each becomes the app's own hash route, and /login (the
 // welcome mail's link) becomes sign in.
-const MAILED_PATHS = ["/verify-email", "/reset-password", "/magic-link", "/accept-invite", "/confirm-email"];
+const MAILED_PATHS = ["/verify-email", "/reset-password", "/magic-link", "/confirm-email"];
 
 function adoptMailedUrl() {
   const { pathname, search, hash } = location;

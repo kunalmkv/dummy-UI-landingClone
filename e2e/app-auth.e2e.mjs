@@ -1,9 +1,8 @@
 // The app's account and sign-in screens, driven through the UI only against the
 // real API: password change, forgot and reset, sign in by emailed link, confirm
 // by emailed link, sessions, two-factor (set up, backup codes, "Not you?",
-// turn off), the identity check with an emailed code, organization
-// invitations, and Google linking. app-auth-coverage.mjs proves each /auth
-// endpoint is used; this proves they work.
+// turn off), the identity check with an emailed code, and Google linking.
+// app-coverage.mjs proves each /auth endpoint is used; this proves they work.
 import assert from "node:assert/strict";
 
 import { generate } from "../../backend/node_modules/otplib/dist/index.js";
@@ -356,45 +355,6 @@ async function freshTotp(secret) {
       await waitText(page, ".toast", /Workspace archived/);
       await page.locator("[data-restore]").first().click();
       await waitText(page, ".toast", /Workspace restored/);
-    });
-
-    // ── organization invitations ─────────────────────────────────────
-
-    const ivy = `${run.prefix}-ivy@example.com`;
-    await step("organization invites: send, see it pending, revoke it", async () => {
-      await page.goto(`${HARNESS}/#/account/invitations`);
-      await page.fill('#invite-form [name="email"]', ivy);
-      await page.getByRole("button", { name: "Send invitation" }).click();
-      await waitText(page, ".toast", /Invitation sent/);
-      await waitText(page, "#section", new RegExp(escapeRegex(ivy)));
-      await page.locator("[data-open-invite]").waitFor();
-      await page.locator("[data-revoke-invite]").first().click();
-      await waitText(page, ".toast", /Invitation revoked/);
-      await waitText(page, "#section", /No pending invitations/);
-    });
-
-    await step("organization invites: the mailed link creates the account and joins", async () => {
-      await page.goto(`${HARNESS}/#/account/invitations`);
-      await page.fill('#invite-form [name="email"]', ivy);
-      await page.getByRole("button", { name: "Send invitation" }).click();
-      await waitText(page, ".toast", /Invitation sent/);
-      const row = await mail(ivy, "INVITE");
-      assert.ok(row.payload.inviteLink.startsWith(`${HARNESS}/accept-invite?token=`), row.payload.inviteLink);
-      const guest = await run.browser.newContext();
-      const guestPage = await guest.newPage();
-      const guestErrors = watch(guestPage);
-      await guestPage.goto(row.payload.inviteLink);
-      await guestPage.waitForURL(/#\/accept-invite\?token=/);
-      await guestPage.getByRole("heading", { name: /Join Una Org/ }).waitFor();
-      await waitText(guestPage, "#app", new RegExp(escapeRegex(ivy)));
-      await guestPage.fill('#org-invite-form [name="firstName"]', "Ivy");
-      await guestPage.fill('#org-invite-form [name="lastName"]', "Invitee");
-      await guestPage.fill('#org-invite-form [name="password"]', PASSWORD);
-      await guestPage.getByRole("button", { name: "Create account and join" }).click();
-      await guestPage.waitForURL(/#\/welcome/);
-      await waitText(guestPage, "body", /Welcome, Ivy/);
-      assert.deepEqual(guestErrors, []);
-      await guest.close();
     });
 
     // ── Google, with a stand-in for Google's own button ──────────────

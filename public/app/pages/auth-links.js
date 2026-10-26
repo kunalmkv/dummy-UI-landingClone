@@ -1,14 +1,14 @@
 // The pages an emailed link opens, and the request pages that send them:
-// forgot password, reset password, sign in by link, confirm an address by
-// link, and joining an organization from its invitation.
+// forgot password, reset password, sign in by link and confirm an address by
+// link.
 
-import { get, post, query } from "../lib/api.js";
+import { post, query } from "../lib/api.js";
 import { latestMail, tokenOf } from "../lib/devmail.js";
 import { afterAuth, authPath, nextFromQuery } from "../lib/invites.js";
 import { go } from "../lib/router.js";
 import { loadUser, signedOut, state } from "../lib/state.js";
-import { busy, formValues, html, mount, roleChip, setFormError, toast } from "../lib/ui.js";
-import { authLayout, signOut } from "./auth.js";
+import { busy, formValues, html, mount, setFormError, toast } from "../lib/ui.js";
+import { authLayout } from "./auth.js";
 
 const card = (title, text, body = "") => authLayout(html`<div><h1>${title}</h1>${text ? html`<p class="muted" style="margin-top:6px">${text}</p>` : ""}</div>${body}`);
 const homeLink = html`<p class="auth-switch"><a href="#/signin">Back to sign in</a></p>`;
@@ -186,95 +186,4 @@ export async function renderConfirmEmail({ query: params }) {
       html`<a class="btn btn-primary btn-block" id="email-changed-done" href="#/account/profile">Back to your account</a>`,
     ),
   );
-}
-
-// ── join an organization from its invitation ───────────────────────────
-
-export async function renderAcceptOrgInvite({ query: params }) {
-  const app = document.getElementById("app");
-  const token = params.token ?? "";
-  if (!token) {
-    mount(app, card("This invitation link is incomplete", "Open the link in your email again.", homeLink));
-    return;
-  }
-  const preview = await get(`/auth/invite/preview${query({ token: token })}`);
-  if (!preview.ok) {
-    mount(app, card("This invitation can't be opened", preview.error, html`<a class="btn btn-block" href="#/">Go to Insidefi</a>`));
-    return;
-  }
-  const invite = preview.data;
-  const here = `/accept-invite?token=${token}`;
-  const summary = html`<dl class="invite-summary">
-    <div><dt>Organization</dt><dd>${invite.organizationName}</dd></div>
-    <div><dt>Your role</dt><dd>${roleChip(invite.role)}</dd></div>
-    <div><dt>Sent to</dt><dd>${invite.email}</dd></div>
-  </dl>`;
-  const user = state.user;
-
-  if (user && user.email.toLowerCase() !== invite.email.toLowerCase()) {
-    mount(
-      app,
-      card(
-        "This invitation is for another address",
-        html`It was sent to <strong class="secondary">${invite.email}</strong>, but you're signed in as <strong class="secondary">${user.email}</strong>.`,
-        html`${summary}<div class="invite-buttons"><a class="btn" href="#/">Not now</a><button class="btn btn-primary" id="org-invite-switch">Sign out and switch account</button></div>`,
-      ),
-    );
-    document.getElementById("org-invite-switch").addEventListener("click", (event) => busy(event.currentTarget, () => signOut(here)));
-    return;
-  }
-
-  if (user) {
-    mount(
-      app,
-      card(`Join ${invite.organizationName}`, "You're signed in with the invited address.", html`${summary}<div id="org-invite-error"></div><div class="invite-buttons"><a class="btn" href="#/">Not now</a><button class="btn btn-primary" id="org-invite-join">Join</button></div>`),
-    );
-    document.getElementById("org-invite-join").addEventListener("click", (event) =>
-      busy(event.currentTarget, async () => {
-        const result = await post("/auth/invite/accept", { token: token });
-        if (!result.ok) {
-          mount(document.getElementById("org-invite-error"), html`<div class="form-error">${result.error}</div>`);
-          return;
-        }
-        toast(`You joined ${result.data?.organization?.name ?? invite.organizationName}`);
-        go("/");
-      }),
-    );
-    return;
-  }
-
-  // Signed out: a new address makes its account here; an existing one signs in first.
-  mount(
-    app,
-    card(
-      `Join ${invite.organizationName}`,
-      html`Create your account for <strong class="secondary">${invite.email}</strong>. The invitation is the proof of the address, so there is no code to enter.`,
-      html`${summary}
-        <form class="form" id="org-invite-form" novalidate>
-          <div class="row-2">
-            <label class="field"><span>First name</span><input type="text" name="firstName" autocomplete="given-name" required /></label>
-            <label class="field"><span>Last name</span><input type="text" name="lastName" autocomplete="family-name" required /></label>
-          </div>
-          <label class="field"><span>Password</span><input type="password" name="password" autocomplete="new-password" required /><span class="hint">10 to 72 characters.</span></label>
-          <button class="btn btn-primary btn-block" type="submit">Create account and join</button>
-        </form>
-        <p class="auth-switch">Already have an account? <a id="org-invite-signin" href="#${authPath("signin", { email: invite.email, next: here })}">Sign in</a></p>`,
-    ),
-  );
-  const form = document.getElementById("org-invite-form");
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const values = formValues(form);
-    busy(form.querySelector("button[type=submit]"), async () => {
-      setFormError(form, null);
-      const result = await post("/auth/invite/accept", { token: token, firstName: values.firstName.trim(), lastName: values.lastName.trim(), password: values.password });
-      if (!result.ok) {
-        setFormError(form, result.error);
-        return;
-      }
-      await loadUser();
-      toast(`You joined ${invite.organizationName}`);
-      go("/");
-    });
-  });
 }

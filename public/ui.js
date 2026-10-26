@@ -221,7 +221,6 @@ const NAV_PAGES = [
   ["/inbox", "inbox"],
   ["/two-factor", "two-factor"],
   ["/sessions", "sessions"],
-  ["/invites", "org invites"],
   ["/edge-cases", "edge cases"],
   ["/google", "google"],
   ["/me", "me"],
