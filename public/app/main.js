@@ -8,6 +8,8 @@ import { loadUser, signedOut, state } from "./lib/state.js";
 import { renderAccount } from "./pages/account.js";
 import { renderConfirmEmail, renderForgotPassword, renderMagicLink, renderResetPassword, renderVerifyEmail } from "./pages/auth-links.js";
 import { renderMfa, renderSignIn, renderSignUp, renderVerify } from "./pages/auth.js";
+import { renderDomainDetail } from "./pages/domain-detail.js";
+import { renderDomains } from "./pages/domains.js";
 import { renderHome } from "./pages/home.js";
 import { renderInvite } from "./pages/invite.js";
 import { renderMembers } from "./pages/members.js";
@@ -85,6 +87,8 @@ route("/w/:id/projects/:projectId/pages/:pageId/edit", guarded(renderPageEditor)
 route("/w/:id/projects/:projectId/pages/:pageId/settings/:section", guarded(renderPageSettings));
 // A preview link works signed out: the token is the key.
 route("/preview/:token", guarded(renderPagePreview, "either"));
+route("/w/:id/domains", guarded(renderDomains));
+route("/w/:id/domains/:domainId", guarded(renderDomainDetail));
 route("/w/:id/members", guarded(renderMembers));
 route("/w/:id/settings", guarded((context) => go(`/w/${context.params.id}/settings/general`, true)));
 route("/w/:id/settings/:section", guarded(renderSettings));

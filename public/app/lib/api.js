@@ -29,6 +29,11 @@ const FRIENDLY = {
   INVITE_EXPIRED: "That invitation has expired. Ask to be invited again.",
   INVITE_REVOKED: "That invitation was withdrawn.",
   INVITE_NOT_PENDING: "That invitation was already answered.",
+  DNS_NOT_VERIFIED: "Verify the domain's DNS records first.",
+  CERT_NOT_RENEWABLE: "A certificate is already on its way.",
+  DOMAIN_ARCHIVED: "This domain is archived. Restore it first.",
+  DOMAIN_REMOVING: "This domain is still being removed. Try again in a few minutes.",
+  DOMAIN_TRANSFERRING: "Support is moving this domain to another workspace right now.",
 };
 
 const PERMISSION = "you do not have permission to do that";

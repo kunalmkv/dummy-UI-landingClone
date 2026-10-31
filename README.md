@@ -7,7 +7,7 @@ the server answered.
 It has two parts, served by one small Node server:
 
 - **The workspace app** at `/`: sign in, the workspace picker, and inside a
-  workspace the sidebar, projects, members and settings.
+  workspace the sidebar, projects, pages, custom domains, members and settings.
 - **The tester pages** at `/account`: one plain page per area (account,
   two-factor, sessions, org invites, edge cases, google, me, organizations,
   workspace, invitations, members, projects, billing, api tokens,

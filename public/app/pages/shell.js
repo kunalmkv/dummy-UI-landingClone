@@ -32,6 +32,7 @@ export async function enterWorkspace(workspaceId) {
 const NAV = [
   { key: "home", label: "Home", icon: "house", path: "" },
   { key: "projects", label: "Projects", icon: "folder-kanban", path: "/projects", count: (w) => w.counts?.projects },
+  { key: "domains", label: "Domains", icon: "globe", path: "/domains" },
   { key: "members", label: "Members", icon: "users", path: "/members", count: (w) => w.counts?.members },
   { key: "settings", label: "Settings", icon: "settings", path: "/settings/general" },
 ];

@@ -110,6 +110,25 @@ is `/preview#<token>`; the app turns it into `#/preview/<token>` and renders the
 draft in a sandboxed frame, signed in or not. Image uploads need S3 set up on the
 API and CORS on the bucket for this origin; without S3 the editor says so.
 
+### Custom domains (added 2026-10-31)
+
+Domains in the sidebar (`#/w/<id>/domains`) lists the workspace's custom hosts
+from `GET /workspaces/:id/domains`: health tabs with the API's counts (health
+is worked out here in the contract's order, never sent), search, status,
+project and sort, cursor paging, and the sandbox hosts on the empty state. Add
+a domain takes the host (a pasted URL is cut to its host, with an echo), the
+project, a bare domain's serving label, and "already live elsewhere". Each row's
+menu checks DNS now, makes primary, assigns, renews, archives or restores, and
+deletes after the removal impact and the host typed exactly. A domain's page
+(`…/domains/<domainId>`) shows the design's banners for each state, the records
+with copy buttons and where each was found, Check now, the DNS provider, the
+certificate and its log, emailing the records, and the same actions; it
+re-reads the domain every 30 s while anything is in flight, never `check-dns`.
+Write controls need `domain.manage`. All 13 workspace routes are called. A
+free plan holds one domain per workspace. Locally there is no Cloudflare, so a
+domain stays pending: the certificate and Live states show against a dev API.
+This replaces the plan's Phase 4 in `frontend/` (user, 2026-10-31).
+
 ### The same app against the mock (added 2026-10-13)
 
 `npm run start:mock` serves the app on `:3002` with every `/api` call sent to
@@ -418,6 +437,7 @@ sleeps, the API's heartbeat sees the long pause and kills the API, and every run
 | `wiki` | the wiki's live tester (on `:4002`), not this harness |
 | `app` | the workspace app at `/` through the UI only: sign up, welcome, onboarding, projects, members, settings, three invitees joining (from the mailed link after signing up, from the banner in their own workspace, from the welcome screen), the bell |
 | `pages` | pages through the UI: the list, a page from a template, an edit in the GrapesJS canvas that autosaves, publish and versions, the preview tab, SEO settings, archive, restore and delete |
+| `domains` | domains through the UI: the empty list with the sandbox host, a subdomain added from a pasted URL, its records, Check now, the provider and the email, the add form's refusals (taken, wildcard, invalid, the plan limit), archive and restore, delete with the typed host, then a root on its serving label |
 | `app-auth` | the app's account and sign-in screens through the UI: password change, forgot and reset, sign in and confirm by emailed link, sessions, two-factor with backup codes and "Not you?", the identity check by emailed code, Google linking |
 | `app-me` | the `/me` screens and the planned `/auth` routes through the UI, on the hybrid harness (:3002): account bell, search, profile and photo, email change, security activity, preferences applied to the page, notification matrix, terms, export, closing the account, the switcher |
 | `app-coverage` | static: every `/auth` and `/me` route in the mock catalog is called, with its own method, somewhere in `public/app` |
