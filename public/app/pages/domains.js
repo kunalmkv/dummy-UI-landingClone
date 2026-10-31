@@ -172,6 +172,13 @@ export async function openDelete(workspaceId, domain, onDone) {
       form.host.addEventListener("input", () => {
         submit.disabled = form.host.value !== domain.host;
       });
+      // Enter submits only a confirmed host, and never reloads the page.
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (!submit.disabled) {
+          submit.click();
+        }
+      });
       submit.addEventListener("click", (event) =>
         busy(event.currentTarget, async () => {
           const result = await del(domainsPath(workspaceId, `/${domain.domainId}${query({ host: form.host.value })}`));

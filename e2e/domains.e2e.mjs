@@ -33,6 +33,7 @@ async function ownProject(someone) {
     await page.setViewportSize({ width: 1440, height: 900 });
     const root = `${run.prefix}.com`;
     const sub = `shop.${root}`;
+    let rootPage = null;
     const toast = (text) => page.locator(".toast").filter({ hasText: text }).waitFor();
     const menuOf = async (host) => {
       await page.locator(`tr[data-row="${host}"] [data-menu]`).click();
@@ -119,6 +120,9 @@ async function ownProject(someone) {
       const confirm = page.getByRole("button", { name: "Delete domain" });
       await page.fill('.modal [name="host"]', sub.toUpperCase());
       assert.equal(await confirm.isDisabled(), true, "a near miss keeps the button off");
+      await page.press('.modal [name="host"]', "Enter");
+      await page.locator("[data-impact]").waitFor();
+      assert.equal(await page.locator(`tr[data-row="${sub}"]`).count(), 1, "Enter on a near miss deletes nothing and keeps the modal");
       await page.fill('.modal [name="host"]', sub);
       await confirm.click();
       await page.getByRole("heading", { name: `${sub} is deleted` }).waitFor();
@@ -134,11 +138,26 @@ async function ownProject(someone) {
       await page.selectOption('[name="servingLabel"]', "lp");
       await page.getByRole("button", { name: "Add domain" }).last().click();
       await page.waitForURL(/\/domains\/[0-9a-f]{24}$/);
+      rootPage = page.url();
       await page.getByText(`lp.${root}`, { exact: true }).waitFor();
       await page.goto(`${HARNESS}/#/w/${dom.workspaceId}/domains`);
       await page.locator(`tr[data-row="${root}"]`).getByText(`serves on lp.${root}`).waitFor();
       await page.locator('[data-count="all"]').filter({ hasText: "1" }).waitFor();
       await page.locator('[data-count="pending"]').filter({ hasText: "1" }).waitFor();
+    });
+
+    await step("the 30-second re-read never wipes an email being written", async () => {
+      // Last, because the page's clock stays fake from here on.
+      await page.clock.install();
+      await page.goto(rootPage);
+      await page.locator("[data-records]").waitFor();
+      await page.fill('[data-email] [name="email"]', "draft@example.com");
+      await page.locator("h1").click();
+      for (let tick = 0; tick < 2; tick += 1) {
+        await page.clock.fastForward(31_000);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      assert.equal(await page.inputValue('[data-email] [name="email"]'), "draft@example.com");
     });
 
     assert.deepEqual(dom.errors, [], "no page errors");

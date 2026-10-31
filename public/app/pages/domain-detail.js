@@ -30,8 +30,8 @@ const FAILURE_COPY = {
   held_elsewhere: "This host is still connected to another platform. Remove it there first, then Check now.",
 };
 
-/** Polls while DNS, the certificate or the pages are still on their way. */
-const inFlight = (domain) => domain.lifecycle !== "archived" && (domain.dns.status !== "verified" || domain.ssl.status !== "active" || !domain.live);
+/** Polls while DNS, the certificate or the pages are on their way; a domain needing attention waits for Check now. */
+const inFlight = (domain) => ["pending", "ssl-pending", "going-live"].includes(healthOf(domain));
 
 function banners(domain) {
   const lines = [];
@@ -184,7 +184,7 @@ export async function renderDomainDetail({ params }) {
             ${recordsTable(domain)}
           </div>
           <div class="card">
-            <div class="card-head"><h2>Certificate</h2>${manage && !archived && domain.dns.status === "verified" ? html`<button class="btn btn-sm" data-renew>${icon("shield-check")} Renew</button>` : ""}</div>
+            <div class="card-head"><h2>Certificate</h2>${manage && !archived && domain.dns.status === "verified" && !["provisioning", "issuing"].includes(domain.ssl.status) ? html`<button class="btn btn-sm" data-renew>${icon("shield-check")} Renew</button>` : ""}</div>
             ${ssl ? certificateCard(ssl) : html`<div class="card-body muted">Couldn't load the certificate.</div>`}
           </div>
           <div class="card">
@@ -279,7 +279,10 @@ export async function renderDomainDetail({ params }) {
       clearInterval(timer);
       return;
     }
-    if (inFlight(domain) && !document.querySelector(".modal-backdrop, .popover")) {
+    // Never redraw under someone typing: the email form keeps what it holds.
+    const typing = content.contains(document.activeElement) && document.activeElement.matches("input, select, textarea");
+    const drafted = [...content.querySelectorAll("[data-email] input")].some((input) => input.value.trim() !== "");
+    if (inFlight(domain) && !typing && !drafted && !document.querySelector(".modal-backdrop, .popover")) {
       await load();
     }
   }, POLL_MS);
