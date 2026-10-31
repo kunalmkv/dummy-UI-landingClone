@@ -240,15 +240,18 @@ export async function openAddDomain(workspaceId, onAdded) {
           }
           const result = await post(domainsPath(workspaceId), body);
           if (!result.ok) {
-            const product = result.code === "ENTITLEMENT_REQUIRED" && result.details?.scope === "product";
-            const plan = result.code === "ENTITLEMENT_REQUIRED" && !product;
+            const scope = result.code === "ENTITLEMENT_REQUIRED" ? (result.details?.scope ?? "plan") : null;
+            const product = scope === "product";
+            const plan = scope === "plan";
             setFormError(
               form,
               product
                 ? "Insidefi has no hostnames left right now. Contact support; your plan isn't the limit."
                 : plan
                   ? "This workspace has all the domains its plan allows (archived ones count). Upgrade in Billing, or delete one."
-                  : (ADD_ERRORS[result.code] ?? result.error),
+                  : scope === "pilot"
+                    ? "Custom domains are in a pilot. Ask support to add this workspace."
+                    : (ADD_ERRORS[result.code] ?? result.error),
             );
             return;
           }
