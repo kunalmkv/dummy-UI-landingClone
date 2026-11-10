@@ -258,7 +258,9 @@ export async function openAddDomain(workspaceId, onAdded) {
                   ? "This workspace has all the domains its plan allows (archived ones count). Upgrade in Billing, or delete one."
                   : scope === "pilot"
                     ? "Custom domains are in a pilot. Ask support to add this workspace."
-                    : (ADD_ERRORS[result.code] ?? result.error),
+                    : scope === "zones"
+                      ? "Insidefi can't host another domain's DNS right now. Contact support; your plan isn't the limit."
+                      : (ADD_ERRORS[result.code] ?? result.error),
             );
             return;
           }
