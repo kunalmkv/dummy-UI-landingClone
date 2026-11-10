@@ -29,11 +29,21 @@ const FAILURE_COPY = {
   ca_error: "The certificate authority had a problem. We're retrying; nothing to do.",
   held_elsewhere: "This host is still connected to another platform. Remove it there first, then Check now.",
 };
+// A delegated root's Route 53 zone, step by step (K.4).
+const ZONE_PROGRESS = { creating: "Creating your DNS zone", created: "Writing our records", records_applying: "Writing our records", ready: "Zone ready" };
+// Why the name servers are still withheld (K.5); ds-ttl-running names its time.
+const BLOCKER_COPY = {
+  "zone-not-ready": "Your DNS zone is being set up",
+  "preflight-pending": "We haven't checked your domain's registrar and DNSSEC yet",
+  "registrar-blocked": "Your registrar blocks a name-server change",
+  "ds-present": "DNSSEC is on: remove the DS record at your registrar first",
+  "migration-incomplete": "Copy your existing records first",
+};
 
 /** Polls while DNS, the certificate or the pages are on their way; a domain needing attention waits for Check now. */
 const inFlight = (domain) => ["pending", "ssl-pending", "going-live"].includes(healthOf(domain));
 
-function banners(domain) {
+function banners(domain, handover) {
   const lines = [];
   const add = (kind, text) => lines.push({ kind, text });
   const serving = domain.dns.records[0];
@@ -44,7 +54,8 @@ function banners(domain) {
   if (domain.claimedElsewhere) {
     add("danger", "Another workspace has already verified this host. Support handles disputes; it is yours by itself if they let it go.");
   }
-  if (domain.dns.nxdomain) {
+  // Behind a shut gate the client has changed nothing yet; the Name servers card says what waits.
+  if (domain.dns.nxdomain && handover?.cutover?.allowed !== false) {
     add("info", `${domain.servingHost} isn't visible yet. DNS changes can take up to 48 hours to spread.`);
   }
   if (domain.dns.status === "mismatch" && serving?.observed) {
@@ -106,7 +117,8 @@ function stateCell(record) {
   return html`<span class="chip">pending</span>`;
 }
 
-function recordsTable(domain) {
+/** No registrar forwarding on a delegated row: it stops working once the name servers move to us. */
+function recordsTable(domain, handover) {
   return html`<div class="table-wrap"><table class="table" data-records>
     <thead><tr><th>Type</th><th>Name</th><th>Value</th><th>TTL</th><th>State</th></tr></thead>
     <tbody>${domain.dns.records.map(
@@ -114,12 +126,32 @@ function recordsTable(domain) {
         <td><span class="chip">${record.type}</span></td>
         <td class="mono">${record.host}${record.altHost ? html`<div class="hint">or ${record.altHost} at the root</div>` : ""}</td>
         <td class="mono">${record.value} <button class="btn btn-ghost btn-icon btn-sm" data-copy="${index}" aria-label="Copy value">${icon("copy")}</button>
-          ${record.alternatives?.includes("forwarding") ? html`<div class="hint">or forward ${domain.host} to https://${domain.servingHost} at your registrar, keeping the path</div>` : ""}</td>
+          ${!handover && record.alternatives?.includes("forwarding") ? html`<div class="hint">or forward ${domain.host} to https://${domain.servingHost} at your registrar, keeping the path</div>` : ""}</td>
         <td class="muted">${record.ttl}</td>
         <td>${stateCell(record)}</td>
       </tr>`,
     )}</tbody>
   </table></div>`;
+}
+
+function blockerText(blocker, handover) {
+  if (blocker === "ds-ttl-running") {
+    return `DNSSEC was just turned off: wait until ${new Date(handover.delegation?.switchAfter).toLocaleString()}`;
+  }
+  return BLOCKER_COPY[blocker] ?? blocker;
+}
+
+/** The zone's progress, then what still shuts the gate, or the names to set once it opens. */
+function nameServersCard(handover) {
+  const status = handover.zone?.status;
+  const cutover = handover.cutover ?? {};
+  return html`<div class="card" data-handover>
+    <div class="card-head"><h2>Name servers</h2><span class="chip ${status === "ready" ? "chip-success" : "chip-info"}" data-zone>${ZONE_PROGRESS[status] ?? status}</span></div>
+    <div class="card-body">${cutover.allowed
+      ? html`<p>Set these at your registrar</p>
+        <ul class="plain-list mono" data-name-servers>${(cutover.nameServers ?? []).map((name) => html`<li>${name} <button class="btn btn-ghost btn-icon btn-sm" data-copy-ns="${name}" aria-label="Copy ${name}">${icon("copy")}</button></li>`)}</ul>`
+      : html`<ul class="plain-list" data-blockers>${(cutover.blockers ?? []).map((blocker) => html`<li>${blockerText(blocker, handover)}</li>`)}</ul>`}</div>
+  </div>`;
 }
 
 function certificateCard(ssl) {
@@ -168,6 +200,8 @@ export async function renderDomainDetail({ params }) {
   function draw(ssl) {
     const project = projects.find((one) => one.projectId === domain.projectId);
     const archived = domain.lifecycle === "archived";
+    // An API from before Phase 2 sends no dns.mode and no handover: the records lane.
+    const handover = domain.dns.mode === "delegated" ? domain.handover : null;
     mount(
       content,
       html`
@@ -180,12 +214,13 @@ export async function renderDomainDetail({ params }) {
           </div>
         </div>
         <div class="section-stack">
-          ${banners(domain).map((line) => html`<div class="form-note ${BANNER_STYLE[line.kind]}" data-banner>${line.text}</div>`)}
+          ${banners(domain, handover).map((line) => html`<div class="form-note ${BANNER_STYLE[line.kind]}" data-banner>${line.text}</div>`)}
+          ${handover ? nameServersCard(handover) : ""}
           <div class="card">
-            <div class="card-head"><h2>DNS records</h2>
+            <div class="card-head"><h2>${handover ? "Records we keep in your zone" : "DNS records"}</h2>
               <div class="toolbar"><span class="muted">${plural(domain.dns.checks, "check")} · last ${domain.dns.lastCheckedAt ? timeAgo(domain.dns.lastCheckedAt) : "never"}</span>
-                <select data-provider ${manage && !archived ? "" : "disabled"} aria-label="Where is your DNS managed?">${PROVIDERS.map(([value, label]) => html`<option value="${value}" ${domain.dns.provider === value ? "selected" : ""}>${label}</option>`)}</select></div></div>
-            ${recordsTable(domain)}
+                ${handover ? "" : html`<select data-provider ${manage && !archived ? "" : "disabled"} aria-label="Where is your DNS managed?">${PROVIDERS.map(([value, label]) => html`<option value="${value}" ${domain.dns.provider === value ? "selected" : ""}>${label}</option>`)}</select>`}</div></div>
+            ${recordsTable(domain, handover)}
           </div>
           <div class="card">
             <div class="card-head"><h2>Certificate</h2>${manage && !archived && domain.dns.status === "verified" && !["provisioning", "issuing"].includes(domain.ssl.status) ? html`<button class="btn btn-sm" data-renew>${icon("shield-check")} Renew</button>` : ""}</div>
@@ -228,6 +263,7 @@ export async function renderDomainDetail({ params }) {
     content.querySelector("[data-check]")?.addEventListener("click", (event) => busy(event.currentTarget, then(() => checkNow(id, domain))));
     content.querySelector("[data-renew]")?.addEventListener("click", (event) => busy(event.currentTarget, then(() => renewCertificate(id, domain))));
     content.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", () => copyText(domain.dns.records[Number(button.dataset.copy)].value)));
+    content.querySelectorAll("[data-copy-ns]").forEach((button) => button.addEventListener("click", () => copyText(button.dataset.copyNs)));
     content.querySelector("[data-provider]")?.addEventListener("change", async (event) => {
       const result = await patch(domainsPath(id, `/${domainId}`), { provider: event.target.value });
       toast(result.ok ? "Saved" : result.error, result.ok ? "success" : "error");

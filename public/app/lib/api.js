@@ -34,6 +34,7 @@ const FRIENDLY = {
   DOMAIN_ARCHIVED: "This domain is archived. Restore it first.",
   DOMAIN_REMOVING: "This domain is still being removed. Try again in a few minutes.",
   DOMAIN_TRANSFERRING: "Support is moving this domain to another workspace right now.",
+  ZONE_IN_USE: "Your registrar still points this domain at our name servers. Change them there first.",
 };
 
 const PERMISSION = "you do not have permission to do that";
