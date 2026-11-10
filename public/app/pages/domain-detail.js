@@ -53,6 +53,10 @@ function banners(domain) {
   if (domain.dns.status === "conflict") {
     add("danger", `Remove the other records for this name${serving?.observed ? ` (${serving.observed})` : ""}.`);
   }
+  if (domain.dns.disagreeing?.length > 0) {
+    const verb = domain.dns.disagreeing.length === 1 ? "doesn't" : "don't";
+    add("warning", `Your nameservers disagree: ${domain.dns.disagreeing.join(", ")} ${verb} have the ${serving?.type ?? "CNAME"} for ${domain.servingHost}, so some visitors miss your pages. Remove the old nameservers at your registrar, or add the record there too.`);
+  }
   if (domain.ssl.status === "failed" || (domain.ssl.status === "active" && domain.ssl.failureReason)) {
     const renewal = domain.ssl.status === "active" ? "Renewal is failing. " : "";
     add("danger", renewal + (FAILURE_COPY[domain.ssl.failureReason] ?? "The certificate couldn't be issued."));
