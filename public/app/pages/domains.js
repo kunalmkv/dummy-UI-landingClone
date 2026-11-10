@@ -52,6 +52,33 @@ const ADD_ERRORS = {
   WILDCARD_NOT_ALLOWED: "Wildcard domains can't be connected. Add each host on its own.",
   INVALID_DOMAIN: "Enter a bare host like go.brand.com: no https://, path or port.",
 };
+const PILOT = "Custom domains are in a pilot. Ask support to add this workspace.";
+// What the registry says stops a name-server change; any one shuts the gate.
+const PREFLIGHT_BLOCKERS = {
+  "cloudflare-registrar": "Cloudflare Registrar keeps every domain on Cloudflare's name servers. Move it to another registrar, or ask support to keep it on DNS records.",
+  "registry-lock": "The registry has locked this domain. Ask your registrar to lift the lock.",
+  "on-hold": "The domain is on hold, so it isn't in DNS at all. Ask your registrar to release it.",
+  "being-deleted": "The domain is being deleted. Renew or restore it at your registrar first.",
+  "transfer-pending": "A transfer to another registrar is under way. Change the name servers once it finishes.",
+  "not-registered": "The registry has no record of this domain. Register it first.",
+};
+// Worth knowing before the switch; none of these stops it.
+const PREFLIGHT_WARNINGS = {
+  "registry-data-unavailable": "This domain's registry shares no details, so the steps are general ones.",
+  "registry-lookup-failed": "The registry didn't answer this time. We ask again every day.",
+  "registrar-update-lock": "An update lock is on. GoDaddy lets you change name servers anyway; elsewhere, turn it off first.",
+  "update-pending": "An earlier change at the registry is still going through. Wait for it to finish.",
+  "recently-expired": "The domain just expired and renewed. Check it's paid for, or your registrar may park it.",
+  "expires-soon": "The domain expires within 30 days. Renew it, or your registrar parks it and the pages stop.",
+  "two-name-server-fields": "Your registrar's screen holds only two name servers. Enter the first two.",
+  "registrar-email-forwarding": "Your registrar forwards your email, and that can stop once the name servers move.",
+  "source-ns-disagree": "Your current name servers disagree about your email. Check its records before you copy them.",
+};
+const EMAIL_LINES = {
+  present: "This domain receives email: copy its mail records too, or mail stops at the switch.",
+  absent: "This domain receives no email today.",
+  unknown: "We couldn't tell whether this domain receives email. Copy any mail records anyway.",
+};
 
 /** Health is derived in the contract's order; the API never sends it. */
 export function healthOf(domain) {
@@ -79,6 +106,19 @@ export function bareHost(text) {
   return text.trim().replace(/^[a-z]+:\/\//i, "").replace(/[/?#].*$/, "").replace(/:\d+$/, "").replace(/\.$/, "").toLowerCase();
 }
 
+/** A key we have no words for yet shows itself, dashes as spaces. */
+const wordsFor = (words, key) => words[key] ?? String(key).replaceAll("-", " ");
+
+/** The registry's findings: blockers, then warnings, then the email line. */
+export function preflightNotes(preflight) {
+  return html`${(preflight?.blockers ?? []).map((key) => html`<div class="form-note danger-text" data-note>${wordsFor(PREFLIGHT_BLOCKERS, key)}</div>`)}
+    ${(preflight?.warnings ?? []).map((key) => html`<div class="form-note warning-text" data-note>${wordsFor(PREFLIGHT_WARNINGS, key)}</div>`)}
+    <div class="form-note" data-note>${EMAIL_LINES[preflight?.emailState] ?? EMAIL_LINES.unknown}</div>`;
+}
+
+/** Both preflight routes share 30 lookups an hour; the refusal says when to come back. */
+const lookupRefusal = (result) => (result.code === "RATE_LIMITED" ? `Too many lookups: try again in ${plural(Math.ceil((result.details?.retryAfterSeconds ?? 60) / 60), "minute")}.` : result.error);
+
 // ─── actions shared with the detail screen ──────────────────────────────────
 
 async function report(result, done) {
@@ -93,6 +133,11 @@ async function report(result, done) {
 export async function checkNow(workspaceId, domain) {
   const result = await post(domainsPath(workspaceId, `/${domain.domainId}/check-dns`), {});
   return report(result, result.ok ? `Checked: DNS ${result.data.dns.status}, SSL ${result.data.ssl.status.replace("_", " ")}` : "");
+}
+
+export async function rerunPreflight(workspaceId, domain) {
+  const result = await post(domainsPath(workspaceId, `/${domain.domainId}/preflight`), {});
+  return report({ ...result, error: lookupRefusal(result) }, "Checked the registrar again");
 }
 
 export async function makePrimary(workspaceId, domain) {
@@ -204,6 +249,18 @@ function showLeftoverRecords(domain) {
   });
 }
 
+/** The advisory lookup worded: the lane an add would take, then what a switch would meet. */
+function preflightAnswer(answer) {
+  const preflight = answer?.preflight;
+  if (answer?.mode !== "delegated" || !preflight) {
+    return html`<div class="form-note">This domain uses DNS records: you add them after adding it.</div>`;
+  }
+  const steps = preflight.migrationStatus === "not_needed" ? "Nothing to copy: you change" : "You copy its records, then change";
+  return html`<div class="form-note">Insidefi will host this domain's DNS. ${steps} its name servers at ${preflight.registrar ?? "your registrar"}.</div>
+    ${preflight.ds?.state === "present" ? html`<div class="form-note warning-text">DNSSEC is on: turn it off at the registrar; we wait out its TTL before the switch.</div>` : ""}
+    ${preflightNotes(preflight)}`;
+}
+
 /** Host, project, a root's serving label, and whether it is live on another platform already. */
 export async function openAddDomain(workspaceId, onAdded) {
   const projects = (await get(ws(workspaceId, "/projects?limit=100"))).data?.items ?? [];
@@ -219,17 +276,28 @@ export async function openAddDomain(workspaceId, onAdded) {
         <label class="field"><span>Attach to project</span><select name="projectId">${projects.map((one) => html`<option value="${one.projectId}">${one.name}</option>`)}</select></label>
         <label class="field"><span>Is it a bare domain?</span><select name="kind"><option value="subdomain">No: a subdomain like go.brand.com</option><option value="root">Yes: a bare domain like brand.com</option></select></label>
         <label class="field hidden" data-label-field><span>Pages serve on</span><select name="servingLabel"><option value="go">go</option><option value="lp">lp</option><option value="offers">offers</option><option value="www">www</option></select><span class="hint">brand.com redirects to this host; www is usually your own site.</span></label>
+        <div class="field hidden" data-preflight-field><div><button type="button" class="btn btn-sm" data-preflight>${icon("search")} Check this domain</button></div><div class="field" data-preflight-result></div></div>
         <label class="check"><input type="checkbox" name="liveElsewhere" /> This host already serves a site on another platform (the certificate comes first, so HTTPS never drops)</label>
       </form>
       <div class="modal-foot"><button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-submit>Add domain</button></div>`,
     onMount: (modal, close) => {
       const form = modal.querySelector("form");
       const echo = form.querySelector("[data-echo]");
+      const preflightResult = form.querySelector("[data-preflight-result]");
       form.host.addEventListener("input", () => {
         const sent = bareHost(form.host.value);
         echo.textContent = sent && sent !== form.host.value.trim() ? `We'll send ${sent}` : "";
+        preflightResult.textContent = "";
       });
-      form.kind.addEventListener("change", () => form.querySelector("[data-label-field]").classList.toggle("hidden", form.kind.value !== "root"));
+      form.kind.addEventListener("change", () => form.querySelectorAll("[data-label-field], [data-preflight-field]").forEach((field) => field.classList.toggle("hidden", form.kind.value !== "root")));
+      // On a click, never per keystroke: both preflight routes share 30 lookups an hour.
+      form.querySelector("[data-preflight]").addEventListener("click", (event) =>
+        busy(event.currentTarget, async () => {
+          const result = await post(domainsPath(workspaceId, "/preflight"), { host: bareHost(form.host.value) });
+          const refusal = result.code === "RATE_LIMITED" ? lookupRefusal(result) : result.details?.scope === "pilot" ? PILOT : (ADD_ERRORS[result.code] ?? result.error);
+          mount(preflightResult, result.ok ? preflightAnswer(result.data) : html`<div class="form-note danger-text">${refusal}</div>`);
+        }),
+      );
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         modal.querySelector("[data-submit]").click();
@@ -257,7 +325,7 @@ export async function openAddDomain(workspaceId, onAdded) {
                 : plan
                   ? "This workspace has all the domains its plan allows (archived ones count). Upgrade in Billing, or delete one."
                   : scope === "pilot"
-                    ? "Custom domains are in a pilot. Ask support to add this workspace."
+                    ? PILOT
                     : scope === "zones"
                       ? "Insidefi can't host another domain's DNS right now. Contact support; your plan isn't the limit."
                       : (ADD_ERRORS[result.code] ?? result.error),

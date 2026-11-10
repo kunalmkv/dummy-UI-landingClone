@@ -1,12 +1,13 @@
 // One custom domain: what needs doing (banners in the design's words), the DNS
-// records with Check now, the certificate and its log, emailing the records,
-// and the actions. Re-read every 30 s while anything is in flight.
+// records with Check now, a handed-over root's name servers and registrar, the
+// certificate and its log, emailing the records, and the actions. Re-read
+// every 30 s while anything is in flight.
 
 import { get, patch, post, ws } from "../lib/api.js";
 import { go, navigation } from "../lib/router.js";
 import { can } from "../lib/state.js";
 import { busy, copyText, emptyState, formValues, html, icon, mount, plural, popover, setFormError, shortDate, timeAgo, toast } from "../lib/ui.js";
-import { archiveDomain, checkNow, dnsChip, domainsPath, healthChip, healthOf, makePrimary, openAssign, openDelete, renewCertificate, restoreDomain, sessionsText, sslChip } from "./domains.js";
+import { archiveDomain, checkNow, dnsChip, domainsPath, healthChip, healthOf, makePrimary, openAssign, openDelete, preflightNotes, renewCertificate, rerunPreflight, restoreDomain, sessionsText, sslChip } from "./domains.js";
 import { shell } from "./shell.js";
 
 const POLL_MS = 30_000;
@@ -36,8 +37,31 @@ const BLOCKER_COPY = {
   "zone-not-ready": "Your DNS zone is being set up",
   "preflight-pending": "We haven't checked your domain's registrar and DNSSEC yet",
   "registrar-blocked": "Your registrar blocks a name-server change",
-  "ds-present": "DNSSEC is on: remove the DS record at your registrar first",
   "migration-incomplete": "Copy your existing records first",
+};
+// Where to change the name servers, keyed by the registrar (p3-rdap-registrars §8.1).
+const GUIDE_STEPS = {
+  godaddy: "At GoDaddy, open Domain Portfolio → the domain → DNS → Nameservers, and choose I'll use my own nameservers.",
+  namecheap: "At Namecheap, open Domain List → Manage → Nameservers, and pick Custom DNS from the drop-down.",
+  squarespace: "At Squarespace, open Domains → the domain → DNS → Domain Nameservers → Use Custom Nameservers. Confirm your password and continue past the DNSSEC prompt.",
+  porkbun: "At Porkbun, open Account → Domain Management → the domain's Details → the Nameservers edit icon.",
+  ionos: "At IONOS, open Domains, click the gear under Actions → Name Server, and choose Use Custom Name Servers.",
+  hostinger: "At Hostinger, open the domain's DNS / Nameservers tab and choose Change Nameservers.",
+  "network-solutions": "At Network Solutions, open Domains → the domain → Manage → the Nameservers tab → Edit.",
+  "name-com": "At Name.com, open My Domains → the domain → Manage Nameservers.",
+  dynadot: "At Dynadot, open My Domains → Manage Domains, tick the domain, then Action → DNS Settings → Name Servers.",
+  ovhcloud: "At OVHcloud, open Web Cloud → Domain names → the domain → DNS servers → Modify DNS servers. Don't keep OVHcloud's own servers beside ours.",
+  gandi: "At Gandi, open Domain → the domain → the Nameservers tab → Change → External.",
+  wix: "At Wix, unassign the domain from its site, then open Domains → Domain Actions → Manage DNS records → Nameservers → Use custom nameservers.",
+  other: "Sign in where you bought the domain, or the website builder you bought it through, open its name server settings and choose custom name servers.",
+};
+// What the parent zone lists, asked directly (K.6).
+const DELEGATION_LINES = {
+  awaiting: "Not switched yet: your domain still uses its old name servers.",
+  blocked_ds: "Not switched yet: DNSSEC is still on for your domain.",
+  partial: "Partly switched: your domain lists some of our name servers beside others. Remove every other one.",
+  delegated: "Switched: your domain uses our name servers.",
+  moved_away: "Your domain no longer uses our name servers. Set them again, or its pages stop within 72 hours.",
 };
 
 /** Polls while DNS, the certificate or the pages are on their way; a domain needing attention waits for Check now. */
@@ -134,23 +158,69 @@ function recordsTable(domain, handover) {
   </table></div>`;
 }
 
+/** The removed DS record's last cached answers, counted down; the 30 s poll redraws it. */
+function dsCountdown(switchAfter) {
+  const minutes = Math.floor((new Date(switchAfter).getTime() - Date.now()) / 60_000);
+  return minutes > 0 ? `Old DNSSEC answers expire in ${Math.floor(minutes / 60)} h ${minutes % 60} min, at ${new Date(switchAfter).toLocaleString()}` : "Old DNSSEC answers expire any moment now";
+}
+
 function blockerText(blocker, handover) {
   if (blocker === "ds-ttl-running") {
-    return `DNSSEC was just turned off: wait until ${new Date(handover.delegation?.switchAfter).toLocaleString()}`;
+    return dsCountdown(handover.delegation?.switchAfter);
+  }
+  if (blocker === "ds-present") {
+    return `DNSSEC is on: turn it off at ${handover.preflight?.registrar ?? "your registrar"} first`;
   }
   return BLOCKER_COPY[blocker] ?? blocker;
 }
 
-/** The zone's progress, then what still shuts the gate, or the names to set once it opens. */
+/** The steps, kept while the parent still lists other name servers. */
+function switchSteps(instructions) {
+  return html`<ol class="plain-list" data-steps>
+      <li>${GUIDE_STEPS[instructions.guide] ?? GUIDE_STEPS.other}</li>
+      <li>Enter ${instructions.guide === "wix" ? "the first two" : "all four"} name servers below, exactly as shown, and remove every other one.</li>
+      <li>Save, then press Check now.</li>
+    </ol>`;
+}
+
+/** The zone's progress and the parent's answer, then what still shuts the gate, or the names once it opens. */
 function nameServersCard(handover) {
   const status = handover.zone?.status;
   const cutover = handover.cutover ?? {};
+  const delegation = handover.delegation ?? {};
+  const instructions = cutover.instructions;
+  const switching = instructions && delegation.status !== "delegated";
+  const names = instructions?.nameServers ?? cutover.nameServers ?? [];
   return html`<div class="card" data-handover>
     <div class="card-head"><h2>Name servers</h2><span class="chip ${status === "ready" ? "chip-success" : "chip-info"}" data-zone>${ZONE_PROGRESS[status] ?? status}</span></div>
-    <div class="card-body">${cutover.allowed
-      ? html`<p>Set these at your registrar</p>
-        <ul class="plain-list mono" data-name-servers>${(cutover.nameServers ?? []).map((name) => html`<li>${name} <button class="btn btn-ghost btn-icon btn-sm" data-copy-ns="${name}" aria-label="Copy ${name}">${icon("copy")}</button></li>`)}</ul>`
-      : html`<ul class="plain-list" data-blockers>${(cutover.blockers ?? []).map((blocker) => html`<li>${blockerText(blocker, handover)}</li>`)}</ul>`}</div>
+    <div class="card-body">
+      ${DELEGATION_LINES[delegation.status] ? html`<p data-delegation>${DELEGATION_LINES[delegation.status]}${delegation.status === "delegated" && (delegation.oursListed ?? 4) < 4 ?` Your registrar lists ${delegation.oursListed} of our four name servers: that works; add all four if it lets you.` : ""}</p>` : ""}
+      ${cutover.allowed
+        ? html`${switching ? switchSteps(instructions) : html`<p>Our name servers</p>`}
+          <ul class="plain-list mono" data-name-servers>${names.map((name) => html`<li>${name} <button class="btn btn-ghost btn-icon btn-sm" data-copy-ns="${name}" aria-label="Copy ${name}">${icon("copy")}</button></li>`)}</ul>
+          <p><button class="btn btn-sm" data-copy-all-ns>${icon("copy")} Copy all</button></p>
+          ${switching
+            ? html`${(instructions.beforeSwitch ?? []).length > 0
+                ? html`<p>Optional: right before you switch, add this at your current DNS provider too, and keep it for ${instructions.cacheHours} hours.</p>
+                  <ul class="plain-list mono" data-before-switch>${instructions.beforeSwitch.map((row, index) => html`<li>${row.type} ${row.host} → ${row.value} (TTL ${row.ttl}) <button class="btn btn-ghost btn-icon btn-sm" data-copy-before="${index}" aria-label="Copy value">${icon("copy")}</button></li>`)}</ul>`
+                : ""}
+              <p class="hint">Old answers can stay cached for up to ${instructions.cacheHours} hours: don't launch a campaign on the switch day.</p>
+              ${instructions.dsWaitUntil ? html`<p class="hint">The DNSSEC wait ended ${timeAgo(instructions.dsWaitUntil)}.</p>` : ""}`
+            : ""}`
+        : html`<ul class="plain-list" data-blockers>${(cutover.blockers ?? []).map((blocker) => html`<li>${blockerText(blocker, handover)}</li>`)}</ul>`}</div>
+  </div>`;
+}
+
+/** What the registry said, when, and a way to ask again. */
+function preflightCard(preflight, rerun) {
+  return html`<div class="card" data-preflight-panel>
+    <div class="card-head"><h2>Registrar</h2>
+      <div class="toolbar"><span class="muted">${preflight?.checkedAt ? `checked ${timeAgo(preflight.checkedAt)}` : "not checked yet"}</span>
+        ${rerun ? html`<button class="btn btn-sm" data-preflight-rerun>${icon("refresh-cw")} Check the registrar again</button>` : ""}</div></div>
+    <div class="card-body">${preflight?.checkedAt
+      ? html`<dl class="kv"><dt>Registrar</dt><dd>${preflight.registrar ?? "—"}</dd><dt>Expires</dt><dd>${shortDate(preflight.expiresAt)}</dd></dl>
+        <div class="field">${preflightNotes(preflight)}</div>`
+      : html`<p class="muted">We look up its registrar, DNSSEC and email within a minute of the add.</p>`}</div>
   </div>`;
 }
 
@@ -216,6 +286,7 @@ export async function renderDomainDetail({ params }) {
         <div class="section-stack">
           ${banners(domain, handover).map((line) => html`<div class="form-note ${BANNER_STYLE[line.kind]}" data-banner>${line.text}</div>`)}
           ${handover ? nameServersCard(handover) : ""}
+          ${handover ? preflightCard(handover.preflight, manage && !archived) : ""}
           <div class="card">
             <div class="card-head"><h2>${handover ? "Records we keep in your zone" : "DNS records"}</h2>
               <div class="toolbar"><span class="muted">${plural(domain.dns.checks, "check")} · last ${domain.dns.lastCheckedAt ? timeAgo(domain.dns.lastCheckedAt) : "never"}</span>
@@ -237,7 +308,7 @@ export async function renderDomainDetail({ params }) {
               <dt>First live</dt><dd>${domain.activatedAt ? timeAgo(domain.activatedAt) : "not yet"}</dd>
             </dl></div>
           </div>
-          ${manage && !archived
+          ${manage && !archived && !handover
             ? html`<div class="card">
                 <div class="card-head"><h2>Email the records</h2></div>
                 <form class="card-body form" data-email novalidate>
@@ -264,6 +335,9 @@ export async function renderDomainDetail({ params }) {
     content.querySelector("[data-renew]")?.addEventListener("click", (event) => busy(event.currentTarget, then(() => renewCertificate(id, domain))));
     content.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", () => copyText(domain.dns.records[Number(button.dataset.copy)].value)));
     content.querySelectorAll("[data-copy-ns]").forEach((button) => button.addEventListener("click", () => copyText(button.dataset.copyNs)));
+    content.querySelector("[data-copy-all-ns]")?.addEventListener("click", () => copyText([...content.querySelectorAll("[data-copy-ns]")].map((button) => button.dataset.copyNs).join("\n")));
+    content.querySelectorAll("[data-copy-before]").forEach((button) => button.addEventListener("click", () => copyText(domain.handover.cutover.instructions.beforeSwitch[Number(button.dataset.copyBefore)].value)));
+    content.querySelector("[data-preflight-rerun]")?.addEventListener("click", (event) => busy(event.currentTarget, then(() => rerunPreflight(id, domain))));
     content.querySelector("[data-provider]")?.addEventListener("change", async (event) => {
       const result = await patch(domainsPath(id, `/${domainId}`), { provider: event.target.value });
       toast(result.ok ? "Saved" : result.error, result.ok ? "success" : "error");

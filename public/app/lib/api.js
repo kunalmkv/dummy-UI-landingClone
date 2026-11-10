@@ -35,6 +35,8 @@ const FRIENDLY = {
   DOMAIN_REMOVING: "This domain is still being removed. Try again in a few minutes.",
   DOMAIN_TRANSFERRING: "Support is moving this domain to another workspace right now.",
   ZONE_IN_USE: "Your registrar still points this domain at our name servers. Change them there first.",
+  // The screens offer each route only where it applies, so this follows a change underneath.
+  DNS_MODE_MISMATCH: "This domain's DNS setup changed: reload the page.",
 };
 
 const PERMISSION = "you do not have permission to do that";
