@@ -31,7 +31,8 @@ async function ownProject(someone) {
     const page = dom.page;
     page.on("console", (message) => message.type() === "error" && !/Failed to load resource|GSI_LOGGER/.test(message.text()) && dom.errors.push(message.text()));
     await page.setViewportSize({ width: 1440, height: 900 });
-    const root = `${run.prefix}.com`;
+    // Under a private suffix: a root that stays on records, never handed over.
+    const root = `${run.prefix}.uk.com`;
     const sub = `shop.${root}`;
     let rootPage = null;
     const toast = (text) => page.locator(".toast").filter({ hasText: text }).waitFor();
