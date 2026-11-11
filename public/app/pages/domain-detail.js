@@ -32,6 +32,8 @@ const FAILURE_COPY = {
 };
 // A delegated root's Route 53 zone, step by step (K.4).
 const ZONE_PROGRESS = { creating: "Creating your DNS zone", created: "Writing our records", records_applying: "Writing our records", ready: "Zone ready" };
+// Once the zone exists its records can be read (K.8).
+const ZONE_READABLE = ["created", "records_applying", "ready"];
 // Why the name servers are still withheld (K.5); ds-ttl-running names its time.
 const BLOCKER_COPY = {
   "zone-not-ready": "Your DNS zone is being set up",
@@ -193,7 +195,7 @@ function switchSteps(instructions) {
 }
 
 /** The zone's progress and the parent's answer, then what still shuts the gate, or the names once it opens. */
-function nameServersCard(handover, importHref) {
+function nameServersCard(handover, importHref, zoneHref) {
   const status = handover.zone?.status;
   const cutover = handover.cutover ?? {};
   const delegation = handover.delegation ?? {};
@@ -201,7 +203,7 @@ function nameServersCard(handover, importHref) {
   const switching = instructions && delegation.status !== "delegated";
   const names = instructions?.nameServers ?? cutover.nameServers ?? [];
   return html`<div class="card" data-handover>
-    <div class="card-head"><h2>Name servers</h2><span class="chip ${status === "ready" ? "chip-success" : "chip-info"}" data-zone>${ZONE_PROGRESS[status] ?? status}</span></div>
+    <div class="card-head"><h2>Name servers</h2><div class="toolbar">${ZONE_READABLE.includes(status) ? html`<a class="btn btn-sm" href="${zoneHref}" data-zone-link>${icon("list")} DNS records</a>` : ""}<span class="chip ${status === "ready" ? "chip-success" : "chip-info"}" data-zone>${ZONE_PROGRESS[status] ?? status}</span></div></div>
     <div class="card-body">
       ${DELEGATION_LINES[delegation.status] ? html`<p data-delegation>${DELEGATION_LINES[delegation.status]}${delegation.status === "delegated" && (delegation.oursListed ?? 4) < 4 ?` Your registrar lists ${delegation.oursListed} of our four name servers: that works; add all four if it lets you.` : ""}</p>` : ""}
       ${cutover.allowed
@@ -294,7 +296,7 @@ export async function renderDomainDetail({ params }) {
         </div>
         <div class="section-stack">
           ${banners(domain, handover).map((line) => html`<div class="form-note ${BANNER_STYLE[line.kind]}" data-banner>${line.text}</div>`)}
-          ${handover ? nameServersCard(handover, `#/w/${id}/domains/${domainId}/import`) : ""}
+          ${handover ? nameServersCard(handover, `#/w/${id}/domains/${domainId}/import`, `#/w/${id}/domains/${domainId}/zone`) : ""}
           ${handover ? preflightCard(handover.preflight, manage && !archived) : ""}
           <div class="card">
             <div class="card-head"><h2>${handover ? "Records we keep in your zone" : "DNS records"}</h2>

@@ -44,6 +44,12 @@ const FRIENDLY = {
   IMPORT_TOO_LARGE: "More than 1,000 record sets: contact support.",
   IMPORT_BLOCKED: "Some rows still need a decision before the copy.",
   PAYLOAD_TOO_LARGE: "That file is over 256 KB.",
+  // RECORD_CONFLICT stays out: busy, moved or already exists, the server's words say which.
+  COPY_OPEN: "Finish copying your records first: change them in the review.",
+  RECORD_NOT_FOUND: "That record is gone: reload the list.",
+  RECORD_LOCKED: "Insidefi keeps this record: it can't be changed here.",
+  UNSUPPORTED_RECORD: "That record type isn't edited here.",
+  ZONE_NOT_READY: "Your zone is still being set up.",
 };
 
 const PERMISSION = "you do not have permission to do that";
