@@ -37,7 +37,12 @@ const BLOCKER_COPY = {
   "zone-not-ready": "Your DNS zone is being set up",
   "preflight-pending": "We haven't checked your domain's registrar and DNSSEC yet",
   "registrar-blocked": "Your registrar blocks a name-server change",
-  "migration-incomplete": "Copy your existing records first",
+};
+// The copy's step and the import page's link words, by migration.status (K.7).
+const MIGRATION_BLOCKER = {
+  pending: ["Copy your existing records first", "Copy your records"],
+  reviewing: ["Finish reviewing your copied records", "Open the review"],
+  ready: ["Checking your copied records at our name servers", "See the check"],
 };
 // Where to change the name servers, keyed by the registrar (p3-rdap-registrars §8.1).
 const GUIDE_STEPS = {
@@ -164,7 +169,11 @@ function dsCountdown(switchAfter) {
   return minutes > 0 ? `Old DNSSEC answers expire in ${Math.floor(minutes / 60)} h ${minutes % 60} min, at ${new Date(switchAfter).toLocaleString()}` : "Old DNSSEC answers expire any moment now";
 }
 
-function blockerText(blocker, handover) {
+function blockerText(blocker, handover, importHref) {
+  if (blocker === "migration-incomplete") {
+    const [text, link] = MIGRATION_BLOCKER[handover.migration?.status] ?? MIGRATION_BLOCKER.pending;
+    return html`${text} · <a href="${importHref}" data-import-link>${link}</a>`;
+  }
   if (blocker === "ds-ttl-running") {
     return dsCountdown(handover.delegation?.switchAfter);
   }
@@ -184,7 +193,7 @@ function switchSteps(instructions) {
 }
 
 /** The zone's progress and the parent's answer, then what still shuts the gate, or the names once it opens. */
-function nameServersCard(handover) {
+function nameServersCard(handover, importHref) {
   const status = handover.zone?.status;
   const cutover = handover.cutover ?? {};
   const delegation = handover.delegation ?? {};
@@ -207,7 +216,7 @@ function nameServersCard(handover) {
               <p class="hint">Old answers can stay cached for up to ${instructions.cacheHours} hours: don't launch a campaign on the switch day.</p>
               ${instructions.dsWaitUntil ? html`<p class="hint">The DNSSEC wait ended ${timeAgo(instructions.dsWaitUntil)}.</p>` : ""}`
             : ""}`
-        : html`<ul class="plain-list" data-blockers>${(cutover.blockers ?? []).map((blocker) => html`<li>${blockerText(blocker, handover)}</li>`)}</ul>`}</div>
+        : html`<ul class="plain-list" data-blockers>${(cutover.blockers ?? []).map((blocker) => html`<li>${blockerText(blocker, handover, importHref)}</li>`)}</ul>`}</div>
   </div>`;
 }
 
@@ -285,7 +294,7 @@ export async function renderDomainDetail({ params }) {
         </div>
         <div class="section-stack">
           ${banners(domain, handover).map((line) => html`<div class="form-note ${BANNER_STYLE[line.kind]}" data-banner>${line.text}</div>`)}
-          ${handover ? nameServersCard(handover) : ""}
+          ${handover ? nameServersCard(handover, `#/w/${id}/domains/${domainId}/import`) : ""}
           ${handover ? preflightCard(handover.preflight, manage && !archived) : ""}
           <div class="card">
             <div class="card-head"><h2>${handover ? "Records we keep in your zone" : "DNS records"}</h2>

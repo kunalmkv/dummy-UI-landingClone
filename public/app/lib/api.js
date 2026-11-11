@@ -37,6 +37,13 @@ const FRIENDLY = {
   ZONE_IN_USE: "Your registrar still points this domain at our name servers. Change them there first.",
   // The screens offer each route only where it applies, so this follows a change underneath.
   DNS_MODE_MISMATCH: "This domain's DNS setup changed: reload the page.",
+  IMPORT_NOT_FOUND: "This review expired or was thrown away: start again.",
+  IMPORT_CLOSED: "This domain's records are already copied.",
+  SOURCE_UNKNOWN: "We don't know your current name servers yet: check the registrar again on the domain page.",
+  ZONE_FILE_INVALID: "That doesn't read as a zone file (BIND text).",
+  IMPORT_TOO_LARGE: "More than 1,000 record sets: contact support.",
+  IMPORT_BLOCKED: "Some rows still need a decision before the copy.",
+  PAYLOAD_TOO_LARGE: "That file is over 256 KB.",
 };
 
 const PERMISSION = "you do not have permission to do that";
