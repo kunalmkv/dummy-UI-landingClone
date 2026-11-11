@@ -7,7 +7,7 @@ import { get, patch, post, ws } from "../lib/api.js";
 import { go, navigation } from "../lib/router.js";
 import { can } from "../lib/state.js";
 import { busy, copyText, emptyState, formValues, html, icon, mount, plural, popover, setFormError, shortDate, timeAgo, toast } from "../lib/ui.js";
-import { archiveDomain, checkNow, dnsChip, domainsPath, healthChip, healthOf, makePrimary, openAssign, openDelete, preflightNotes, renewCertificate, rerunPreflight, restoreDomain, sessionsText, sslChip } from "./domains.js";
+import { archiveDomain, checkNow, dnsChip, domainsPath, downloadZoneFile, healthChip, healthOf, makePrimary, openAssign, openDelete, preflightNotes, renewCertificate, rerunPreflight, restoreDomain, sessionsText, sslChip } from "./domains.js";
 import { shell } from "./shell.js";
 
 const POLL_MS = 30_000;
@@ -30,8 +30,14 @@ const FAILURE_COPY = {
   ca_error: "The certificate authority had a problem. We're retrying; nothing to do.",
   held_elsewhere: "This host is still connected to another platform. Remove it there first, then Check now.",
 };
-// A delegated root's Route 53 zone, step by step (K.4).
-const ZONE_PROGRESS = { creating: "Creating your DNS zone", created: "Writing our records", records_applying: "Writing our records", ready: "Zone ready" };
+// A delegated root's Route 53 zone, step by step (K.4), then kept or deleted once archived (D19).
+const ZONE_PROGRESS = { creating: "Creating your DNS zone", created: "Writing our records", records_applying: "Writing our records", ready: "Zone ready", tombstoned: "Zone kept", deleted: "Zone deleted" };
+// An archived root's zone: kept while its name servers may still point at us, then deleted (D19).
+const ARCHIVED_LINES = {
+  "pending-release": "Being deleted: we finish once your domain's name servers no longer point at us (pending DNS release). Restore it to keep it.",
+  tombstoned: "Archived. Its zone is kept while your name servers may still point at us; point them elsewhere and we delete it about a week later.",
+  deleted: "Archived. Its zone was deleted; restoring makes a new one with new name servers.",
+};
 // Once the zone exists its records can be read (K.8).
 const ZONE_READABLE = ["created", "records_applying", "ready"];
 // Why the name servers are still withheld (K.5); ds-ttl-running names its time.
@@ -79,7 +85,8 @@ function banners(domain, handover) {
   const add = (kind, text) => lines.push({ kind, text });
   const serving = domain.dns.records[0];
   if (domain.lifecycle === "archived") {
-    add("warning", "Archived. Restore it to use it again; the same TXT token has to be found again.");
+    const zone = handover?.zone?.status;
+    add("warning", ARCHIVED_LINES[domain.deletePending && zone === "tombstoned" ? "pending-release" : zone] ?? "Archived. Restore it to use it again; the same TXT token has to be found again.");
     return lines;
   }
   if (domain.claimedElsewhere) {
@@ -194,17 +201,24 @@ function switchSteps(instructions) {
     </ol>`;
 }
 
-/** The zone's progress and the parent's answer, then what still shuts the gate, or the names once it opens. */
-function nameServersCard(handover, importHref, zoneHref) {
+/**
+ * The zone's progress and the parent's answer, then what still shuts the gate, or the names once it opens.
+ * Archived, only the zone's state and its file: the parent's answer is no longer checked.
+ */
+function nameServersCard(handover, importHref, zoneHref, archived) {
   const status = handover.zone?.status;
+  // A kept zone exports itself; a deleted one, the copy saved at archive.
+  const saved = status === "deleted" ? handover.zone.exportedAt : null;
   const cutover = handover.cutover ?? {};
   const delegation = handover.delegation ?? {};
   const instructions = cutover.instructions;
   const switching = instructions && delegation.status !== "delegated";
   const names = instructions?.nameServers ?? cutover.nameServers ?? [];
   return html`<div class="card" data-handover>
-    <div class="card-head"><h2>Name servers</h2><div class="toolbar">${ZONE_READABLE.includes(status) ? html`<a class="btn btn-sm" href="${zoneHref}" data-zone-link>${icon("list")} DNS records</a>` : ""}<span class="chip ${status === "ready" ? "chip-success" : "chip-info"}" data-zone>${ZONE_PROGRESS[status] ?? status}</span></div></div>
-    <div class="card-body">
+    <div class="card-head"><h2>Name servers</h2><div class="toolbar">${!archived && ZONE_READABLE.includes(status) ? html`<a class="btn btn-sm" href="${zoneHref}" data-zone-link>${icon("list")} DNS records</a>` : ""}${status === "tombstoned" || saved ? html`<button class="btn btn-sm" data-export>${icon("download")} Download zone file</button>` : ""}${saved ? html`<span class="muted" data-saved>saved ${shortDate(saved)}</span>` : ""}<span class="chip ${status === "ready" ? "chip-success" : "chip-info"}" data-zone>${ZONE_PROGRESS[status] ?? status}</span></div></div>
+    ${archived
+      ? ""
+      : html`<div class="card-body">
       ${DELEGATION_LINES[delegation.status] ? html`<p data-delegation>${DELEGATION_LINES[delegation.status]}${delegation.status === "delegated" && (delegation.oursListed ?? 4) < 4 ?` Your registrar lists ${delegation.oursListed} of our four name servers: that works; add all four if it lets you.` : ""}</p>` : ""}
       ${cutover.allowed
         ? html`${switching ? switchSteps(instructions) : html`<p>Our name servers</p>`}
@@ -218,7 +232,7 @@ function nameServersCard(handover, importHref, zoneHref) {
               <p class="hint">Old answers can stay cached for up to ${instructions.cacheHours} hours: don't launch a campaign on the switch day.</p>
               ${instructions.dsWaitUntil ? html`<p class="hint">The DNSSEC wait ended ${timeAgo(instructions.dsWaitUntil)}.</p>` : ""}`
             : ""}`
-        : html`<ul class="plain-list" data-blockers>${(cutover.blockers ?? []).map((blocker) => html`<li>${blockerText(blocker, handover, importHref)}</li>`)}</ul>`}</div>
+        : html`<ul class="plain-list" data-blockers>${(cutover.blockers ?? []).map((blocker) => html`<li>${blockerText(blocker, handover, importHref)}</li>`)}</ul>`}</div>`}
   </div>`;
 }
 
@@ -296,7 +310,7 @@ export async function renderDomainDetail({ params }) {
         </div>
         <div class="section-stack">
           ${banners(domain, handover).map((line) => html`<div class="form-note ${BANNER_STYLE[line.kind]}" data-banner>${line.text}</div>`)}
-          ${handover ? nameServersCard(handover, `#/w/${id}/domains/${domainId}/import`, `#/w/${id}/domains/${domainId}/zone`) : ""}
+          ${handover ? nameServersCard(handover, `#/w/${id}/domains/${domainId}/import`, `#/w/${id}/domains/${domainId}/zone`, archived) : ""}
           ${handover ? preflightCard(handover.preflight, manage && !archived) : ""}
           <div class="card">
             <div class="card-head"><h2>${handover ? "Records we keep in your zone" : "DNS records"}</h2>
@@ -344,6 +358,7 @@ export async function renderDomainDetail({ params }) {
   function wire() {
     content.querySelector("[data-check]")?.addEventListener("click", (event) => busy(event.currentTarget, then(() => checkNow(id, domain))));
     content.querySelector("[data-renew]")?.addEventListener("click", (event) => busy(event.currentTarget, then(() => renewCertificate(id, domain))));
+    content.querySelector("[data-export]")?.addEventListener("click", (event) => busy(event.currentTarget, () => downloadZoneFile(id, domain)));
     content.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", () => copyText(domain.dns.records[Number(button.dataset.copy)].value)));
     content.querySelectorAll("[data-copy-ns]").forEach((button) => button.addEventListener("click", () => copyText(button.dataset.copyNs)));
     content.querySelector("[data-copy-all-ns]")?.addEventListener("click", () => copyText([...content.querySelectorAll("[data-copy-ns]")].map((button) => button.dataset.copyNs).join("\n")));

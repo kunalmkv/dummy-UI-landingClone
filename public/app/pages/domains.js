@@ -53,6 +53,13 @@ const ADD_ERRORS = {
   INVALID_DOMAIN: "Enter a bare host like go.brand.com: no https://, path or port.",
 };
 const PILOT = "Custom domains are in a pilot. Ask support to add this workspace.";
+const ZONES_SPENT = "Insidefi can't host another domain's DNS right now. Contact support; your plan isn't the limit.";
+// A restore whose zone was deleted clears the old one first; nothing changes when that fails.
+const RESTORE_ERRORS = {
+  UPSTREAM_UNAVAILABLE: "Our DNS host didn't answer while we cleared its old zone. Restore it again.",
+  RECORD_CONFLICT: "Its old zone was busy or changed while we cleared it. Restore it again.",
+  UNSUPPORTED_RECORD: "Its old zone holds a record we can't delete. Contact support to remove it.",
+};
 // What the registry says stops a name-server change; any one shuts the gate.
 const PREFLIGHT_BLOCKERS = {
   "cloudflare-registrar": "Cloudflare Registrar keeps every domain on Cloudflare's name servers. Move it to another registrar, or ask support to keep it on DNS records.",
@@ -156,9 +163,35 @@ export async function archiveDomain(workspaceId, domain) {
   return report(result, `${domain.host} archived; its pages move back to the primary or sandbox`);
 }
 
+/** A handover root keeps its zone, gets a new one, or comes back on the records lane. */
 export async function restoreDomain(workspaceId, domain) {
   const result = await post(domainsPath(workspaceId, `/${domain.domainId}/restore`), {});
-  return report(result, `${domain.host} restored. If you removed the TXT record, add it back.`);
+  const zone = result.data?.dns?.mode === "delegated" ? result.data.handover?.zone?.status : null;
+  const done =
+    zone === "creating"
+      ? `${domain.host} restored with a new zone: you will set new name servers.`
+      : zone
+        ? `${domain.host} restored; its zone is checked again before its name servers show.`
+        : domain.dns?.mode === "delegated"
+          ? `${domain.host} restored on the records lane: add the DNS records it shows at your DNS provider.`
+          : `${domain.host} restored. If you removed the TXT record, add it back.`;
+  const error = result.details?.scope === "zones" ? ZONES_SPENT : (RESTORE_ERRORS[result.code] ?? result.error);
+  return report({ ...result, error }, done);
+}
+
+/** The zone file as the API names it: the live zone, or the copy saved at archive once the zone is deleted. */
+export async function downloadZoneFile(workspaceId, domain) {
+  const result = await get(domainsPath(workspaceId, `/${domain.domainId}/zone/export`));
+  if (!result.ok) {
+    const gone = result.details?.zoneStatus === "deleted";
+    toast(gone ? "Its zone was deleted and no copy of it was kept." : result.code === "UPSTREAM_UNAVAILABLE" ? "The zone file couldn't be read just now. Try again in a moment." : result.error, "error");
+    return;
+  }
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([result.data?.text ?? ""], { type: "text/plain" }));
+  link.download = result.data?.fileName ?? `${domain.host}.zone`;
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 /** Pick another project; the move drops primary, the target keeps its own. */
@@ -206,6 +239,7 @@ export async function openDelete(workspaceId, domain, onDone) {
           <li>${sessionsText(facts.sessions30d)} sessions in the last 30 days · ${plural(facts.activeCampaigns, "active campaign")}</li>
           ${facts.isPrimary ? html`<li>It is the project's primary domain: new pages default to the sandbox until another is primary</li>` : ""}
           ${facts.certificateRevoked ? html`<li>Its SSL certificate is deleted</li>` : ""}
+          ${facts.handover ? html`<li data-impact-handover>Your domain's name servers point at our zone: <a href="#" data-impact-export>download its zone file</a> first, then move them. We keep the zone until they no longer point at us.</li>` : ""}
           ${facts.dnsRecordsManual ? html`<li>The DNS records at your provider must be removed by hand</li>` : ""}
         </ul>
         <label class="field"><span>Type <b>${domain.host}</b> to confirm</span><input type="text" name="host" autocomplete="off" /></label>
@@ -216,6 +250,10 @@ export async function openDelete(workspaceId, domain, onDone) {
       const submit = modal.querySelector("[data-submit]");
       form.host.addEventListener("input", () => {
         submit.disabled = form.host.value !== domain.host;
+      });
+      modal.querySelector("[data-impact-export]")?.addEventListener("click", (event) => {
+        event.preventDefault();
+        downloadZoneFile(workspaceId, domain);
       });
       // Enter submits only a confirmed host, and never reloads the page.
       form.addEventListener("submit", (event) => {
@@ -232,7 +270,12 @@ export async function openDelete(workspaceId, domain, onDone) {
             return;
           }
           close();
-          showLeftoverRecords(domain);
+          // A handover root's records live in our zone: nothing to remove at a provider.
+          if (facts.dnsRecordsManual) {
+            showLeftoverRecords(domain);
+          } else {
+            toast(`${domain.host} deleted`);
+          }
           onDone();
         }),
       );
@@ -327,7 +370,7 @@ export async function openAddDomain(workspaceId, onAdded) {
                   : scope === "pilot"
                     ? PILOT
                     : scope === "zones"
-                      ? "Insidefi can't host another domain's DNS right now. Contact support; your plan isn't the limit."
+                      ? ZONES_SPENT
                       : (ADD_ERRORS[result.code] ?? result.error),
             );
             return;
@@ -417,7 +460,7 @@ export async function renderDomains({ params }) {
             <td><div class="name"><a href="#/w/${id}/domains/${domain.domainId}">${domain.host}</a>${domain.primary ? html` <span class="chip chip-brand">Primary</span>` : ""}</div>
               ${domain.servingHost !== domain.host ? html`<div class="email">serves on ${domain.servingHost}</div>` : ""}</td>
             <td>${projectName(domain.projectId)}</td>
-            <td>${healthChip(domain)}</td>
+            <td>${healthChip(domain)}${domain.deletePending ? html` <span class="chip chip-warning" data-pending-release>Pending DNS release</span>` : ""}</td>
             <td>${dnsChip(domain)} ${sslChip(domain)}</td>
             <td class="muted">${plural(domain.pages, "page")} · ${plural(domain.quizzes, "quiz", "quizzes")}</td>
             <td class="muted">${sessionsText(domain.sessions30d)}</td>
