@@ -7,7 +7,7 @@ import { get, patch, post, ws } from "../lib/api.js";
 import { go, navigation } from "../lib/router.js";
 import { can } from "../lib/state.js";
 import { busy, copyText, emptyState, formValues, html, icon, mount, plural, popover, setFormError, shortDate, timeAgo, toast } from "../lib/ui.js";
-import { archiveDomain, checkNow, dnsChip, domainsPath, downloadZoneFile, healthChip, healthOf, makePrimary, openAssign, openDelete, preflightNotes, renewCertificate, rerunPreflight, restoreDomain, sessionsText, sslChip } from "./domains.js";
+import { archiveDomain, checkNow, dnsChip, domainsPath, downloadZoneFile, healthChip, healthOf, makePrimary, openAssign, openDelete, preflightNotes, recheckCertificate, rerunPreflight, restoreDomain, sessionsText, sslChip } from "./domains.js";
 import { shell } from "./shell.js";
 
 const POLL_MS = 30_000;
@@ -357,7 +357,7 @@ export async function renderDomainDetail({ params }) {
 
   function wire() {
     content.querySelector("[data-check]")?.addEventListener("click", (event) => busy(event.currentTarget, then(() => checkNow(id, domain))));
-    content.querySelector("[data-renew]")?.addEventListener("click", (event) => busy(event.currentTarget, then(() => renewCertificate(id, domain))));
+    content.querySelector("[data-renew]")?.addEventListener("click", (event) => busy(event.currentTarget, then(() => recheckCertificate(id, domain))));
     content.querySelector("[data-export]")?.addEventListener("click", (event) => busy(event.currentTarget, () => downloadZoneFile(id, domain)));
     content.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", () => copyText(domain.dns.records[Number(button.dataset.copy)].value)));
     content.querySelectorAll("[data-copy-ns]").forEach((button) => button.addEventListener("click", () => copyText(button.dataset.copyNs)));

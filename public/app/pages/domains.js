@@ -53,9 +53,14 @@ const ADD_ERRORS = {
   INVALID_DOMAIN: "Enter a bare host like go.brand.com: no https://, path or port.",
 };
 const PILOT = "Custom domains are in a pilot. Ask support to add this workspace.";
+const PAUSED = "New domains are paused for now. Nothing was added: try again later.";
+const PRIVATE_SUFFIX = "This name is not registered at a registrar, so it has no name servers to hand over.";
+// One level only: a label serves the pages, such as go in go.brand.com.
+const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 const ZONES_SPENT = "Insidefi can't host another domain's DNS right now. Contact support; your plan isn't the limit.";
 // A restore whose zone was deleted clears the old one first; nothing changes when that fails.
 const RESTORE_ERRORS = {
+  DNS_MODE_MISMATCH: "This domain keeps its DNS at its own provider, and nothing runs that setup any more. Delete it and add its root again.",
   UPSTREAM_UNAVAILABLE: "Our DNS host didn't answer while we cleared its old zone. Restore it again.",
   RECORD_CONFLICT: "Its old zone was busy or changed while we cleared it. Restore it again.",
   UNSUPPORTED_RECORD: "Its old zone holds a record we can't delete. Contact support to remove it.",
@@ -153,9 +158,10 @@ export async function makePrimary(workspaceId, domain) {
   return report(result, `${domain.host} is the project's primary domain${demoted ? ` (was ${demoted.host})` : ""}`);
 }
 
-export async function renewCertificate(workspaceId, domain) {
+/** Amazon's certificate is asked again: a stopped ladder starts over, a pending one refuses. */
+export async function recheckCertificate(workspaceId, domain) {
   const result = await post(domainsPath(workspaceId, `/${domain.domainId}/ssl/renew`), {});
-  return report(result, "Renewal started · usually a few minutes");
+  return report(result, "Checking the certificate again · usually a few minutes");
 }
 
 export async function archiveDomain(workspaceId, domain) {
@@ -163,18 +169,13 @@ export async function archiveDomain(workspaceId, domain) {
   return report(result, `${domain.host} archived; its pages move back to the primary or sandbox`);
 }
 
-/** A handover root keeps its zone, gets a new one, or comes back on the records lane. */
+/** A handover root keeps its zone, or gets a new one. */
 export async function restoreDomain(workspaceId, domain) {
   const result = await post(domainsPath(workspaceId, `/${domain.domainId}/restore`), {});
-  const zone = result.data?.dns?.mode === "delegated" ? result.data.handover?.zone?.status : null;
   const done =
-    zone === "creating"
+    result.data?.handover?.zone?.status === "creating"
       ? `${domain.host} restored with a new zone: you will set new name servers.`
-      : zone
-        ? `${domain.host} restored; its zone is checked again before its name servers show.`
-        : domain.dns?.mode === "delegated"
-          ? `${domain.host} restored on the records lane: add the DNS records it shows at your DNS provider.`
-          : `${domain.host} restored. If you removed the TXT record, add it back.`;
+      : `${domain.host} restored; its zone is checked again before its name servers show.`;
   const error = result.details?.scope === "zones" ? ZONES_SPENT : (RESTORE_ERRORS[result.code] ?? result.error);
   return report({ ...result, error }, done);
 }
@@ -271,7 +272,7 @@ export async function openDelete(workspaceId, domain, onDone) {
           }
           close();
           // A handover root's records live in our zone: nothing to remove at a provider.
-          if (facts.dnsRecordsManual) {
+          if (facts.dnsRecordsManual && (domain.dns.records ?? []).length > 0) {
             showLeftoverRecords(domain);
           } else {
             toast(`${domain.host} deleted`);
@@ -287,16 +288,16 @@ function showLeftoverRecords(domain) {
   openModal({
     title: `${domain.host} is deleted`,
     subtitle: "Remove these DNS records at your provider now.",
-    body: html`<div class="modal-body"><ul class="plain-list mono">${domain.dns.records.map((record) => html`<li>${record.type} ${record.host} → ${record.value}</li>`)}</ul></div>
+    body: html`<div class="modal-body"><ul class="plain-list mono">${(domain.dns.records ?? []).map((record) => html`<li>${record.type} ${record.host} → ${record.value}</li>`)}</ul></div>
       <div class="modal-foot"><button class="btn btn-primary" data-close>Done</button></div>`,
   });
 }
 
-/** The advisory lookup worded: the lane an add would take, then what a switch would meet. */
+/** The advisory lookup worded: what a switch would meet. */
 function preflightAnswer(answer) {
   const preflight = answer?.preflight;
-  if (answer?.mode !== "delegated" || !preflight) {
-    return html`<div class="form-note">This domain uses DNS records: you add them after adding it.</div>`;
+  if (!preflight) {
+    return html`<div class="form-note">We look its registrar up right after the add.</div>`;
   }
   const steps = preflight.migrationStatus === "not_needed" ? "Nothing to copy: you change" : "You copy its records, then change";
   return html`<div class="form-note">Insidefi will host this domain's DNS. ${steps} its name servers at ${preflight.registrar ?? "your registrar"}.</div>
@@ -304,7 +305,62 @@ function preflightAnswer(answer) {
     ${preflightNotes(preflight)}`;
 }
 
-/** Host, project, a root's serving label, and whether it is live on another platform already. */
+/**
+ * What a refused add or lookup says: the words, a fill when the answer names
+ * the root to add instead, and whether the lane is paused (nothing was taken).
+ */
+export function addRefusal(result) {
+  const details = result.details ?? {};
+  if (result.code === "HANDOVER_PAUSED") {
+    return { paused: true, text: PAUSED };
+  }
+  if (result.code === "HANDOVER_UNSUPPORTED" && details.reason === "subdomain") {
+    const label = details.servingLabel ?? null;
+    return {
+      text: label ? `Add ${details.root} and pick the ${label} label.` : `Add ${details.root} and pick the label its pages serve on.`,
+      fill: { host: details.root, servingLabel: label },
+    };
+  }
+  if (result.code === "HANDOVER_UNSUPPORTED") {
+    return { text: PRIVATE_SUFFIX };
+  }
+  if (result.code === "RATE_LIMITED") {
+    return { text: lookupRefusal(result) };
+  }
+  const scope = result.code === "ENTITLEMENT_REQUIRED" ? (result.details?.scope ?? "plan") : null;
+  if (scope === "pilot") {
+    return { text: PILOT };
+  }
+  if (scope === "zones") {
+    return { text: ZONES_SPENT };
+  }
+  if (scope === "plan") {
+    return { text: "This workspace has all the domains its plan allows (archived ones count). Upgrade in Billing, or delete one." };
+  }
+  return { text: ADD_ERRORS[result.code] ?? result.error };
+}
+
+/** The add form's one refusal box, and its paused banner; null clears both. */
+function showRefusal(form, refusal, onFill) {
+  form.querySelectorAll("[data-refusal], [data-paused]").forEach((node) => node.remove());
+  if (!refusal) {
+    return;
+  }
+  const box = document.createElement("div");
+  if (refusal.paused) {
+    box.className = "form-note warning-text";
+    box.dataset.paused = "";
+    box.textContent = refusal.text;
+  } else {
+    box.className = "form-error";
+    box.dataset.refusal = "";
+    mount(box, html`${icon("circle-alert")}<span>${refusal.text}</span>${refusal.fill ? html`<button type="button" class="btn btn-sm" data-fill>Use ${refusal.fill.host}${refusal.fill.servingLabel ? html` · ${refusal.fill.servingLabel}` : ""}</button>` : ""}`);
+    box.querySelector("[data-fill]")?.addEventListener("click", () => onFill(refusal.fill));
+  }
+  form.prepend(box);
+}
+
+/** The root, the label its pages serve on, and what the bare root does. */
 export async function openAddDomain(workspaceId, onAdded) {
   const projects = (await get(ws(workspaceId, "/projects?limit=100"))).data?.items ?? [];
   if (projects.length === 0) {
@@ -313,32 +369,57 @@ export async function openAddDomain(workspaceId, onAdded) {
   }
   openModal({
     title: "Add a domain",
-    subtitle: "We give you the DNS records next. Nothing changes for visitors until they verify.",
+    subtitle: "Insidefi hosts its DNS: you change its name servers at your registrar once everything is ready. Nothing changes for visitors before that.",
     body: html`<form class="modal-body form" novalidate>
-        <label class="field"><span>Domain</span><input type="text" name="host" required placeholder="go.brand.com" autocomplete="off" /><span class="hint" data-echo></span></label>
+        <label class="field"><span>Domain</span><input type="text" name="host" required placeholder="brand.com" autocomplete="off" /><span class="hint" data-echo></span></label>
         <label class="field"><span>Attach to project</span><select name="projectId">${projects.map((one) => html`<option value="${one.projectId}">${one.name}</option>`)}</select></label>
-        <label class="field"><span>Is it a bare domain?</span><select name="kind"><option value="subdomain">No: a subdomain like go.brand.com</option><option value="root">Yes: a bare domain like brand.com</option></select></label>
-        <label class="field hidden" data-label-field><span>Pages serve on</span><select name="servingLabel"><option value="go">go</option><option value="lp">lp</option><option value="offers">offers</option><option value="www">www</option></select><span class="hint">brand.com redirects to this host; www is usually your own site.</span></label>
-        <div class="field hidden" data-preflight-field><div><button type="button" class="btn btn-sm" data-preflight>${icon("search")} Check this domain</button></div><div class="field" data-preflight-result></div></div>
-        <label class="check"><input type="checkbox" name="liveElsewhere" /> This host already serves a site on another platform (the certificate comes first, so HTTPS never drops)</label>
+        <label class="field"><span>Pages serve on</span><input type="text" name="servingLabel" value="go" maxlength="63" autocomplete="off" /><span class="hint" data-serving></span></label>
+        <div class="field" data-apex-field>
+          <span>What <b data-root>your domain</b> itself does</span>
+          <label class="check"><input type="radio" name="apexMode" value="keep" checked /> Keep: your own site or address stays there</label>
+          <label class="check"><input type="radio" name="apexMode" value="redirect" /> Redirect: it sends visitors to the pages' address</label>
+        </div>
+        <div class="field" data-preflight-field><div><button type="button" class="btn btn-sm" data-preflight>${icon("search")} Check this domain</button></div><div class="field" data-preflight-result></div></div>
       </form>
       <div class="modal-foot"><button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-submit>Add domain</button></div>`,
     onMount: (modal, close) => {
       const form = modal.querySelector("form");
       const echo = form.querySelector("[data-echo]");
+      const serving = form.querySelector("[data-serving]");
+      const rootName = form.querySelector("[data-root]");
       const preflightResult = form.querySelector("[data-preflight-result]");
-      form.host.addEventListener("input", () => {
+      const label = () => form.servingLabel.value.trim().toLowerCase();
+      /** The names the three fields make: the echo, where pages open, what the root is called. */
+      function redraw() {
         const sent = bareHost(form.host.value);
         echo.textContent = sent && sent !== form.host.value.trim() ? `We'll send ${sent}` : "";
+        serving.textContent = `Pages open at ${label() || "go"}.${sent || "your domain"}`;
+        rootName.textContent = sent || "your domain";
+      }
+      form.host.addEventListener("input", () => {
+        redraw();
         preflightResult.textContent = "";
       });
-      form.kind.addEventListener("change", () => form.querySelectorAll("[data-label-field], [data-preflight-field]").forEach((field) => field.classList.toggle("hidden", form.kind.value !== "root")));
+      form.servingLabel.addEventListener("input", redraw);
+      const fill = (names) => {
+        form.host.value = names.host;
+        if (names.servingLabel) {
+          form.servingLabel.value = names.servingLabel;
+        }
+        showRefusal(form, null);
+        redraw();
+      };
       // On a click, never per keystroke: both preflight routes share 30 lookups an hour.
       form.querySelector("[data-preflight]").addEventListener("click", (event) =>
         busy(event.currentTarget, async () => {
           const result = await post(domainsPath(workspaceId, "/preflight"), { host: bareHost(form.host.value) });
-          const refusal = result.code === "RATE_LIMITED" ? lookupRefusal(result) : result.details?.scope === "pilot" ? PILOT : (ADD_ERRORS[result.code] ?? result.error);
-          mount(preflightResult, result.ok ? preflightAnswer(result.data) : html`<div class="form-note danger-text">${refusal}</div>`);
+          if (result.ok) {
+            showRefusal(form, null);
+            mount(preflightResult, preflightAnswer(result.data));
+            return;
+          }
+          preflightResult.textContent = "";
+          showRefusal(form, addRefusal(result), fill);
         }),
       );
       form.addEventListener("submit", (event) => {
@@ -348,31 +429,18 @@ export async function openAddDomain(workspaceId, onAdded) {
       modal.querySelector("[data-submit]").addEventListener("click", (event) =>
         busy(event.currentTarget, async () => {
           const values = formValues(form);
-          setFormError(form, null);
-          const body = { host: bareHost(values.host), projectId: values.projectId };
-          if (values.kind === "root") {
-            body.servingLabel = values.servingLabel;
+          showRefusal(form, null);
+          if (label() !== "" && !LABEL.test(label())) {
+            showRefusal(form, { text: "Pages serve on one label, such as go or lp: letters, digits and dashes." });
+            return;
           }
-          if (form.liveElsewhere.checked) {
-            body.liveElsewhere = true;
+          const body = { host: bareHost(values.host), projectId: values.projectId, apexMode: values.apexMode };
+          if (label() !== "") {
+            body.servingLabel = label();
           }
           const result = await post(domainsPath(workspaceId), body);
           if (!result.ok) {
-            const scope = result.code === "ENTITLEMENT_REQUIRED" ? (result.details?.scope ?? "plan") : null;
-            const product = scope === "product";
-            const plan = scope === "plan";
-            setFormError(
-              form,
-              product
-                ? "Insidefi has no hostnames left right now. Contact support; your plan isn't the limit."
-                : plan
-                  ? "This workspace has all the domains its plan allows (archived ones count). Upgrade in Billing, or delete one."
-                  : scope === "pilot"
-                    ? PILOT
-                    : scope === "zones"
-                      ? ZONES_SPENT
-                      : (ADD_ERRORS[result.code] ?? result.error),
-            );
+            showRefusal(form, addRefusal(result), fill);
             return;
           }
           close();
@@ -498,7 +566,7 @@ export async function renderDomains({ params }) {
       }
       items.push({ label: "Assign to project…", icon: "folder-input", onClick: () => openAssign(id, domain, load) });
       if (domain.dns.status === "verified" && !["provisioning", "issuing"].includes(domain.ssl.status)) {
-        items.push({ label: "Renew certificate", icon: "shield-check", onClick: then(() => renewCertificate(id, domain)) });
+        items.push({ label: "Check certificate again", icon: "shield-check", onClick: then(() => recheckCertificate(id, domain)) });
       }
       items.push("sep", { label: "Archive", icon: "archive", onClick: then(() => archiveDomain(id, domain)) });
     }
