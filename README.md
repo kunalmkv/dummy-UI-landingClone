@@ -51,6 +51,8 @@ use it), then pick a mode:
 | `PORT=3003 ROUTING=split MOCK_TARGET=http://localhost:4003 API_TARGET=http://localhost:3000 node server.js` | 3003 | routes live on the deployed API go to the real API, the rest to the mock |
 | `npm run start:mock` | 3002 | every call to the mock |
 
+The e2e scripts import from the backend next to this repo (`../../backend`). To run them against another checkout of the backend (the handover branch's master on :3000, say), name it: `BACKEND=/path/to/backend node e2e/domains.e2e.mjs`. `e2e/app-coverage.mjs` reads that backend's mock catalog the same way, and checks that the app calls every `/auth`, `/me` and custom-domains route.
+
 The browser only ever talks to this server; everything under `/api` is proxied,
 so the auth cookie stays first-party. Every answer carries an
 `x-harness-upstream` header saying which side served it.

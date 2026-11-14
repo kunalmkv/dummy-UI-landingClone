@@ -67,7 +67,7 @@ const RESTORE_ERRORS = {
 };
 // What the registry says stops a name-server change; any one shuts the gate.
 const PREFLIGHT_BLOCKERS = {
-  "cloudflare-registrar": "Cloudflare Registrar keeps every domain on Cloudflare's name servers. Move it to another registrar, or ask support to keep it on DNS records.",
+  "cloudflare-registrar": "Cloudflare Registrar keeps every domain on Cloudflare's name servers, so it can't be handed over. Move the domain to another registrar first.",
   "registry-lock": "The registry has locked this domain. Ask your registrar to lift the lock.",
   "on-hold": "The domain is on hold, so it isn't in DNS at all. Ask your registrar to release it.",
   "being-deleted": "The domain is being deleted. Renew or restore it at your registrar first.",
@@ -241,7 +241,6 @@ export async function openDelete(workspaceId, domain, onDone) {
           ${facts.isPrimary ? html`<li>It is the project's primary domain: new pages default to the sandbox until another is primary</li>` : ""}
           ${facts.certificateRevoked ? html`<li>Its SSL certificate is deleted</li>` : ""}
           ${facts.handover ? html`<li data-impact-handover>Your domain's name servers point at our zone: <a href="#" data-impact-export>download its zone file</a> first, then move them. We keep the zone until they no longer point at us.</li>` : ""}
-          ${facts.dnsRecordsManual ? html`<li>The DNS records at your provider must be removed by hand</li>` : ""}
         </ul>
         <label class="field"><span>Type <b>${domain.host}</b> to confirm</span><input type="text" name="host" autocomplete="off" /></label>
       </form>
@@ -272,24 +271,11 @@ export async function openDelete(workspaceId, domain, onDone) {
           }
           close();
           // A handover root's records live in our zone: nothing to remove at a provider.
-          if (facts.dnsRecordsManual && (domain.dns.records ?? []).length > 0) {
-            showLeftoverRecords(domain);
-          } else {
-            toast(`${domain.host} deleted`);
-          }
+          toast(`${domain.host} deleted`);
           onDone();
         }),
       );
     },
-  });
-}
-
-function showLeftoverRecords(domain) {
-  openModal({
-    title: `${domain.host} is deleted`,
-    subtitle: "Remove these DNS records at your provider now.",
-    body: html`<div class="modal-body"><ul class="plain-list mono">${(domain.dns.records ?? []).map((record) => html`<li>${record.type} ${record.host} → ${record.value}</li>`)}</ul></div>
-      <div class="modal-foot"><button class="btn btn-primary" data-close>Done</button></div>`,
   });
 }
 
@@ -557,15 +543,21 @@ export async function renderDomains({ params }) {
     if (!can("domain.manage")) {
       return items;
     }
+    // A row from the retired records lane is no longer checked, and cannot be restored.
+    const handover = domain.dns.mode === "delegated";
     if (domain.lifecycle === "archived") {
-      items.push("sep", { label: "Restore", icon: "archive-restore", onClick: then(() => restoreDomain(id, domain)) });
+      if (handover) {
+        items.push("sep", { label: "Restore", icon: "archive-restore", onClick: then(() => restoreDomain(id, domain)) });
+      }
     } else {
-      items.push({ label: "Check DNS now", icon: "refresh-cw", onClick: then(() => checkNow(id, domain)) });
+      if (handover) {
+        items.push({ label: "Check DNS now", icon: "refresh-cw", onClick: then(() => checkNow(id, domain)) });
+      }
       if (!domain.primary && domain.dns.status === "verified") {
         items.push({ label: "Make primary", icon: "star", onClick: then(() => makePrimary(id, domain)) });
       }
       items.push({ label: "Assign to project…", icon: "folder-input", onClick: () => openAssign(id, domain, load) });
-      if (domain.dns.status === "verified" && !["provisioning", "issuing"].includes(domain.ssl.status)) {
+      if (handover && domain.dns.status === "verified" && !["provisioning", "issuing"].includes(domain.ssl.status)) {
         items.push({ label: "Check certificate again", icon: "shield-check", onClick: then(() => recheckCertificate(id, domain)) });
       }
       items.push("sep", { label: "Archive", icon: "archive", onClick: then(() => archiveDomain(id, domain)) });

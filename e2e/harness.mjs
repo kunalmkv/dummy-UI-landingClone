@@ -6,13 +6,22 @@
 // page working. Everything a run creates is deleted by its email prefix.
 
 import assert from "node:assert/strict";
-
-import "../../backend/node/bootstrap.node.js";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { chromium } from "playwright";
-import mongoose from "../../backend/node_modules/mongoose/index.js";
 
-import runHelper from "../../backend/master/tests/helpers/http-run.helper.js";
+// The backend these checks import from: ../../backend, the checkout this repo
+// lives in, unless BACKEND names another one (the master on :3000 is its own).
+const BACKEND = path.resolve(process.env.BACKEND ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "../../backend"));
+
+/** A module of that backend, by its path inside it. */
+export const fromBackend = (file) => import(pathToFileURL(path.join(BACKEND, file)).href);
+
+// First, so dotenv runs before any env config is read.
+await fromBackend("node/bootstrap.node.js");
+const { default: mongoose } = await fromBackend("node_modules/mongoose/index.js");
+const { default: runHelper } = await fromBackend("master/tests/helpers/http-run.helper.js");
 
 // Override with HARNESS=http://localhost:3002 to drive the hybrid harness (planned routes on the mock).
 export const HARNESS = process.env.HARNESS ?? "http://localhost:3001";
