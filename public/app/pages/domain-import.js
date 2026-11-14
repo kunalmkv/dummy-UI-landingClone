@@ -42,7 +42,7 @@ const KINDS = { excluded: ["", "not copied"], blocking: ["chip-danger", "blocks 
 // Every conflict code's kind and words.
 const CONFLICTS = {
   "chakra-reserved": ["excluded", "We serve your pages on this name"],
-  "apex-address": ["excluded", "Your root's address is ours now: it redirects to your pages"],
+  "apex-address": ["excluded", "Your root redirects to your pages, so its address isn't copied"],
   "apex-cname": ["excluded", "A CNAME can't sit at the root"],
   "cname-coexists": ["blocking", "A CNAME can't share its name with another record: leave one out"],
   "alias-unsupported": ["ack", "ALIAS isn't supported: we copy the address it answers today"],
@@ -65,7 +65,16 @@ const GATE_ACKS = {
   "email-unknown": ["We couldn't tell whether this domain receives email: I've checked", "Our registrar check couldn't see whether mail is set up."],
   "scan-only": ["A scan can miss records: I've added any it missed", "A scan finds only the names it guesses or certificate logs list."],
   "file-unchecked": ["Your file couldn't be compared with your live DNS: it's current", "Your current name servers didn't answer for its email records."],
+  // These two name the hosts: a function of the domain.
+  "apex-replaced": (domain) => [`${domain.host} answers a site of yours today: I accept that redirecting replaces it`, `Once it redirects, visitors of ${domain.host} land on ${domain.servingHost}.`],
+  "serving-replaced": (domain) => [`${domain.servingHost} answers today; at the switch it serves your Insidefi pages: I accept that`, "Your current servers stop answering there once the name servers move."],
 };
+
+/** What the root's mode means for the rows below: its own records are copied, or it redirects and its address is ours. */
+const apexNote = (domain) =>
+  html`<div class="form-note" data-apex-note>${domain.apex?.mode === "redirect"
+    ? `${domain.host} redirects to ${domain.servingHost}: its address records are not copied, and records that point at it need a look.`
+    : `${domain.host} keeps its own records: its address, mail and TXT records are copied as they are.`}</div>`;
 
 const relativeName = (name, host) => (name === host ? "@" : String(name ?? "").endsWith(`.${host}`) ? name.slice(0, -host.length - 1) : String(name ?? ""));
 const rowLabel = (row, host) => (row.name ? `${relativeName(row.name, host)} ${row.type}` : `line ${row.line ?? "?"}`);
@@ -178,7 +187,8 @@ function reviewCard(session, host, context) {
   </div>`;
 }
 
-function gatePanel(session, host, manage) {
+function gatePanel(session, domain, manage) {
+  const host = domain.host;
   const gate = session.gate ?? {};
   const rows = session.rows ?? [];
   const given = session.acknowledged ?? [];
@@ -195,7 +205,8 @@ function gatePanel(session, host, manage) {
       ${blocking.length > 0 ? html`<div data-gate-blocking><span class="danger-text">${plural(blocking.length, "row")} to leave out or fix:</span> ${jumps(blocking)}</div>` : ""}
       ${waiting.length > 0 ? html`<div data-gate-unacknowledged><span class="warning-text">${plural(waiting.length, "row")} to accept or leave out:</span> ${jumps(waiting)}</div>` : ""}
       ${asks.map((code) => {
-        const [label, why] = GATE_ACKS[code] ?? [String(code).replaceAll("-", " "), ""];
+        const entry = GATE_ACKS[code] ?? [String(code).replaceAll("-", " "), ""];
+        const [label, why] = typeof entry === "function" ? entry(domain) : entry;
         return html`<label class="check" data-gate-ack="${code}"><input type="checkbox" data-ack-gate="${code}" ${given.includes(code) ? "checked" : ""} ${manage ? "" : "disabled"} /> <span>${label}${why ? html` <span class="hint">${why}</span>` : ""}</span></label>`;
       })}
       ${gate.allowed ? html`<p class="success-text" data-gate-open>Nothing stops the copy.</p>` : ""}
@@ -270,8 +281,9 @@ export async function renderDomainImport({ params }) {
           ${open ? scanCard(view, manage, domainHref) : ""}
           ${open ? zoneFileCard(view, manage) : ""}
           ${open && !session ? emptyState({ iconName: "copy", title: "No review yet", text: "Scan your current DNS or add a zone file: what they find shows here for you to review." }) : ""}
+          ${reviewing ? apexNote(domain) : ""}
           ${reviewing ? reviewCard(session, host, context) : ""}
-          ${reviewing ? gatePanel(session, host, context.editable) : ""}
+          ${reviewing ? gatePanel(session, domain, context.editable) : ""}
           ${["verifying", "confirmed"].includes(session?.status) ? verifyCard(session, host, domainHref, manage) : ""}
         </div>`,
     );

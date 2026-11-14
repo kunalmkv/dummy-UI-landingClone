@@ -93,6 +93,12 @@ function statusLine(blockers, importHref) {
   return blockers.map((code, index) => html`${index > 0 ? " · " : ""}${BLOCKERS[code] ?? String(code).replaceAll("-", " ")}${code === "migration-incomplete" ? html` · <a href="${importHref}" data-import-link>Open the copy</a>` : ""}`);
 }
 
+/** An alias lists its target as its one value and has no TTL of its own; a routing set has neither. */
+const isAlias = (record) => record.ttl === null && (record.values ?? []).length === 1;
+
+/** What Insidefi keeps in the zone, said once above the rows. */
+const LOCK_LEGEND = "Kept by Insidefi: the certificate's validation CNAMEs, the go CNAME to our edge, the _verify record, and the root's address aliases while it redirects. Everything else is yours.";
+
 /** A values row shows the client's values, then Insidefi's greyed; only rows of none and values change. */
 function recordRow(record, index, host, writable) {
   const lock = record.lock ?? "none";
@@ -103,7 +109,7 @@ function recordRow(record, index, host, writable) {
     <td class="mono">${relativeName(record.name, host)}</td>
     <td><span class="chip">${record.type ?? "—"}</span></td>
     <td class="muted">${record.ttl ?? "—"}</td>
-    <td class="mono">${mine.map((value) => html`<div>${value}</div>`)}${locked.map((value) => html`<div class="muted" data-locked-value>${value} <span class="hint">Insidefi's</span></div>`)}${mine.length + locked.length === 0 ? "—" : ""}</td>
+    <td class="mono">${isAlias(record) ? html`<span data-alias>alias → ${record.values[0]}</span>` : mine.map((value) => html`<div>${value}</div>`)}${locked.map((value) => html`<div class="muted" data-locked-value>${value} <span class="hint">Insidefi's</span></div>`)}${mine.length + locked.length === 0 ? "—" : ""}</td>
     <td><span class="chip ${tone}" data-lock="${lock}">${words}</span></td>
     <td class="actions">${writable && ["none", "values"].includes(lock)
       ? html`<button class="btn btn-ghost btn-sm" data-edit="${index}">${icon("pencil")} Edit</button><button class="btn btn-ghost btn-sm" data-delete="${index}">${icon("trash-2")} Delete</button>`
@@ -115,6 +121,7 @@ function recordsCard(view, host, writable) {
   const records = view.records ?? [];
   return html`<div class="card">
     <div class="card-head"><h2>Records</h2><span class="muted">${plural(view.zone?.recordCount ?? records.length, "record set")} · the SOA and NS are ours, so not listed</span></div>
+    <div class="card-body hint" data-lock-legend>${LOCK_LEGEND}</div>
     ${records.length > 0
       ? html`<div class="table-wrap"><table class="table" data-records>
           <thead><tr><th>Name</th><th>Type</th><th>TTL</th><th>Values</th><th>Lock</th><th></th></tr></thead>
